@@ -1,170 +1,196 @@
-"""绘制开始、游戏、暂停、结束四种静态界面（实现步骤 1）。"""  # 模块说明
+"""四类界面渲染：游戏、开始、暂停、结束（步骤 1）。"""  # 模块说明
 
-from . import config  # 尺寸与颜色配置
-from .canvas import Canvas, text_width  # 字符画布与文本宽度工具
+import math  # 计算重试图标的箭头方向
+
+import pygame  # 图形库
+
+from . import config, graphics  # 配置与图形绘制
+from .layout import Layout, Rect  # 布局矩形
 from .state import GameState  # 游戏状态
 
-TITLE_TEXT = "贪 吃 蛇"  # 顶部游戏标题
-GUIDE_TEXT = "操作指引：W/A/S/D 移动    P / 鼠标点击 暂停    +1 分/食物"  # 棋盘下方操作指引
-PREVIEW_HINT = "预览：1 游戏  2 开始  3 暂停  4 结束   P 暂停  R 重试  Esc 退出"  # 底部预览按键提示
-
-PAUSE_PANEL_X = 1  # 暂停面板左上角列（要求显示在左上角）
-PAUSE_PANEL_Y = 0  # 暂停面板左上角行
-PAUSE_PANEL_WIDTH = 26  # 暂停面板宽度
-PAUSE_PANEL_HEIGHT = 4  # 暂停面板高度
-PAUSE_LINES = (  # 暂停面板文字内容
-    ("已暂停", "yellow"),  # 第一行：暂停状态
-    ("P / 鼠标点击 继续", "white"),  # 第二行：继续方式
-)  # 暂停面板文字结束
-
-START_PANEL_WIDTH = 38  # 开始面板宽度
-START_PANEL_HEIGHT = 10  # 开始面板高度
-START_LINES = (  # 开始面板文字内容（8 行 + 上下边框）
-    ("贪 吃 蛇", "yellow"),  # 游戏标题
-    ("", "white"),  # 空行
-    ("W / A / S / D   移动小蛇", "white"),  # 移动操作说明
-    ("吃到食物 +1 分，小蛇变长一格", "white"),  # 得分与成长规则
-    ("撞墙或撞到自己，游戏结束", "white"),  # 失败规则
-    ("P 键 / 鼠标点击   暂停", "white"),  # 暂停操作说明
-    ("", "white"),  # 空行
-    ("== 按任意键开始 ==", "cyan"),  # 开始提示
-)  # 开始面板文字结束
-
-OVER_PANEL_WIDTH = 34  # 失败面板宽度
-OVER_PANEL_HEIGHT = 7  # 失败面板高度
+PANEL_RADIUS = 20  # 弹窗圆角半径
 
 
-def _new_canvas() -> Canvas:  # 创建空白画布
-    """创建一块全黑背景的空白画布。"""  # 函数说明
-    return Canvas()  # 使用配置中的默认尺寸
+def _to_pygame_rect(rect: Rect) -> pygame.Rect:  # 转换为 pygame 矩形
+    """把自定义 Rect 转成 pygame.Rect。"""  # 函数说明
+    return pygame.Rect(rect.left, rect.top, rect.width, rect.height)  # 构造 pygame 矩形
 
 
-def _draw_title(canvas: Canvas) -> None:  # 绘制游戏标题
-    """在棋盘上方居中绘制青色标题。"""  # 函数说明
-    canvas.put_centered(config.BOARD_LEFT, config.BOARD_WIDTH, 0, TITLE_TEXT, fg=config.TITLE_FG)  # 居中写入标题
+def _draw_board(surface: pygame.Surface, layout: Layout) -> None:  # 绘制棋盘
+    """绘制灰色实心墙体与内部深色可活动区域。"""  # 函数说明
+    pygame.draw.rect(surface, config.COLOR_WALL, _to_pygame_rect(layout.board))  # 整块灰色墙体
+    pygame.draw.rect(surface, config.COLOR_BOARD, _to_pygame_rect(layout.interior))  # 内部深色区域
 
 
-def _draw_score(canvas: Canvas, state: GameState) -> None:  # 绘制右上角分数
-    """把白色分数文本右对齐到棋盘右上角。"""  # 函数说明
-    text = f"得分：{state.score}"  # 组织分数文本
-    x = config.BOARD_LEFT + config.BOARD_WIDTH - text_width(text)  # 计算右对齐起点列
-    canvas.put_text(x, 0, text, fg="white")  # 用白色写入
+def _draw_snake(surface: pygame.Surface, state: GameState) -> None:  # 绘制蛇
+    """绘制蓝色蛇头、黄色蛇身的实心圆，并把相邻圆形的重叠区域颜色加深。"""  # 函数说明
+    centers = state.snake  # 蛇的圆心列表
+    colors = [config.COLOR_HEAD] + [config.COLOR_BODY] * (len(centers) - 1)  # 蛇头蓝色、其余黄色
+    for (cx, cy), color in zip(centers, colors):  # 逐节绘制圆形
+        graphics.draw_circle(surface, (cx, cy), config.SNAKE_RADIUS, color)  # 抗锯齿实心圆
+    for first in range(len(centers)):  # 遍历所有圆形对
+        for second in range(first + 1, len(centers)):  # 只与后面的圆形比较
+            lens = graphics.lens_polygon(centers[first], centers[second], config.SNAKE_RADIUS)  # 计算重叠透镜
+            if lens:  # 两个圆确实重叠
+                overlap_color = graphics.darken(colors[first], config.DARKEN_FACTOR)  # 重叠处用前一个圆的加深色
+                graphics.draw_polygon(surface, lens, overlap_color)  # 绘制加深的重叠区域
 
 
-def _draw_board(canvas: Canvas) -> None:  # 绘制墙体
-    """用灰色实心方块画出矩形围墙，并把内部清成黑色。"""  # 函数说明
-    canvas.fill_rect(config.BOARD_LEFT, config.BOARD_TOP, config.BOARD_WIDTH, config.BOARD_HEIGHT,  # 铺满整个棋盘外框
-                     config.WALL_CHAR, config.WALL_FG, config.WALL_BG)  # 先铺满灰色实心方块
-    canvas.fill_rect(config.INTERIOR_LEFT, config.INTERIOR_TOP, config.INTERIOR_WIDTH,  # 内部空地起点与宽度
-                     config.INTERIOR_HEIGHT, " ", "white", "black")  # 再把内部挖成黑色空地
+def _draw_food(surface: pygame.Surface, state: GameState) -> None:  # 绘制食物
+    """绘制绿色空心正方形食物。"""  # 函数说明
+    x, y = state.food  # 食物左上角
+    rect = pygame.Rect(x, y, config.FOOD_SIDE, config.FOOD_SIDE)  # 食物正方形
+    graphics.draw_hollow_square(surface, rect, config.COLOR_FOOD, config.FOOD_OUTLINE)  # 只画边框，形成空心
 
 
-def _draw_snake(canvas: Canvas, state: GameState) -> None:  # 绘制蛇
-    """蛇头用蓝色实心方块，蛇身用黄色实心方块。"""  # 函数说明
-    for index, (x, y) in enumerate(state.cells):  # 遍历蛇头与每一节身体
-        is_head = index == 0  # 第 0 格为蛇头
-        char = config.HEAD_CHAR if is_head else config.BODY_CHAR  # 蛇头与身体使用实心方块字符
-        fg = config.HEAD_FG if is_head else config.BODY_FG  # 蛇头蓝色、身体黄色
-        bg = config.HEAD_BG if is_head else config.BODY_BG  # 背景与前景同色以填满整格
-        canvas.fill_rect(x, y, 1, 1, char, fg, bg)  # 用实心方块填出一格
+def _draw_header(surface: pygame.Surface, layout: Layout, state: GameState) -> None:  # 绘制顶部信息
+    """绘制顶部青色标题与右上角白色分数（不再显示左上角暂停图标）。"""  # 函数说明
+    graphics.draw_text(surface, config.TITLE_TEXT, config.TITLE_FONT_SIZE, config.COLOR_TITLE,  # 标题居中
+                       center=(layout.window[0] // 2, layout.header.height // 2))  # 标题居中
+    graphics.draw_text(surface, f"得分：{state.score}", config.SCORE_FONT_SIZE, config.COLOR_TEXT,  # 分数右上角
+                       topright=(layout.window[0] - config.MARGIN, 16))  # 右上角白色分数
 
 
-def _draw_food(canvas: Canvas, state: GameState) -> None:  # 绘制食物
-    """食物用绿色空心圆形表示。"""  # 函数说明
-    x, y = state.food  # 取出食物所在坐标
-    canvas.put_text(x, y, config.FOOD_CHAR, fg=config.FOOD_FG)  # 写入绿色空心圆
+def _draw_footer(surface: pygame.Surface, layout: Layout, text: str) -> None:  # 绘制底部指引
+    """在底部居中绘制操作指引。"""  # 函数说明
+    graphics.draw_text(surface, text, config.GUIDE_FONT_SIZE, config.COLOR_TEXT,  # 底部居中
+                       center=(layout.window[0] // 2, layout.footer.top + layout.footer.height // 2))  # 居中指引
 
 
-def _draw_guide(canvas: Canvas) -> None:  # 绘制操作指引
-    """在棋盘下方居中绘制白色操作指引。"""  # 函数说明
-    canvas.put_centered(0, config.SCREEN_WIDTH, 20, GUIDE_TEXT, fg="white")  # 第 20 行居中显示
+def _draw_veil(surface: pygame.Surface, layout: Layout, alpha: int) -> None:  # 绘制半透明遮罩
+    """在棋盘区域盖上一层指定透明度的深色遮罩。"""  # 函数说明
+    veil = pygame.Surface((layout.board.width, layout.board.height), pygame.SRCALPHA)  # 透明遮罩层
+    veil.fill((*config.COLOR_VEIL, alpha))  # 填充带透明度的深色
+    surface.blit(veil, (layout.board.left, layout.board.top))  # 盖上遮罩
 
 
-def _draw_preview_hint(canvas: Canvas) -> None:  # 绘制预览模式提示
-    """在最底部绘制灰色预览按键说明。"""  # 函数说明
-    canvas.put_centered(0, config.SCREEN_WIDTH, 21, PREVIEW_HINT, fg=config.HINT_FG)  # 第 21 行灰色居中
+def _draw_panel(surface: pygame.Surface, rect: Rect, alpha: int,  # 面板参数
+                border_color: tuple[int, int, int]) -> None:  # 绘制半透明圆角面板
+    """绘制带阴影、半透明底与彩色边框的圆角面板。"""  # 函数说明
+    shadow = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)  # 阴影层
+    pygame.draw.rect(shadow, (0, 0, 0, 100), shadow.get_rect(), border_radius=PANEL_RADIUS)  # 圆角黑色阴影
+    surface.blit(shadow, (rect.left + 8, rect.top + 10))  # 阴影向右下偏移
+    panel = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)  # 面板层
+    pygame.draw.rect(panel, (*config.COLOR_PANEL, alpha), panel.get_rect(),  # 半透明圆角底色
+                     border_radius=PANEL_RADIUS)  # 半透明圆角底色
+    pygame.draw.rect(panel, (*border_color, 220), panel.get_rect(), width=2,  # 彩色边框
+                     border_radius=PANEL_RADIUS)  # 彩色边框
+    surface.blit(panel, (rect.left, rect.top))  # 绘制到主画面
 
 
-def _draw_panel(canvas: Canvas, x: int, y: int, width: int, height: int,  # 面板位置与尺寸
-                border_fg: str = config.PANEL_FG) -> None:  # 绘制带边框的面板
-    """清空面板区域并画出边框。"""  # 函数说明
-    canvas.fill_rect(x, y, width, height, " ", "white", "black")  # 面板内部先铺黑底
-    canvas.draw_border(x, y, width, height, fg=border_fg)  # 再画白色边框
+def _draw_exit_icon(surface: pygame.Surface, center: tuple[int, int],  # 图标中心与颜色
+                    color: tuple[int, int, int]) -> None:  # 绘制退出图标
+    """绘制“去掉右边竖线的口 + 指向门内的箭头”。"""  # 函数说明
+    cx, cy = center  # 图标中心
+    left, top = cx - 18, cy - 26  # 门框左上角
+    box_width, box_height, thickness = 30, 52, 4  # 门框宽高与线宽
+    pygame.draw.rect(surface, color, (left, top, box_width, thickness))  # 上门框
+    pygame.draw.rect(surface, color, (left, top + box_height - thickness, box_width, thickness))  # 下门框
+    pygame.draw.rect(surface, color, (left, top, thickness, box_height))  # 左门框（右边留空形成开口）
+    shaft_y = cy  # 箭头纵坐标
+    pygame.draw.rect(surface, color, (left + 8, shaft_y - 2, box_width + 22, 4))  # 从右侧伸入的箭杆
+    graphics.draw_arrow_head(surface, (left + 8, shaft_y), (-1, 0), 12, color)  # 指向左侧门内的箭头
 
 
-def _put_panel_lines(canvas: Canvas, x: int, y: int, width: int,  # 面板位置与宽度
-                     lines: tuple[tuple[str, str], ...]) -> None:  # 写面板文字
-    """在面板内部逐行居中写入文字。"""  # 函数说明
-    for offset, (text, fg) in enumerate(lines):  # 逐行遍历面板文字
-        if not text:  # 空字符串只占一行，不写内容
-            continue  # 跳过空行
-        canvas.put_centered(x + 1, width - 2, y + 1 + offset, text, fg=fg)  # 在内容区居中写入
+def _draw_play_icon(surface: pygame.Surface, center: tuple[int, int],  # 图标中心与颜色
+                    color: tuple[int, int, int]) -> None:  # 绘制继续图标
+    """绘制尖端向右的实心正三角形。"""  # 函数说明
+    graphics.draw_triangle(surface, (center[0] + 24, center[1]), 30, 46, color)  # 实心向右三角形
 
 
-def _base_scene(state: GameState) -> Canvas:  # 组装公共场景
-    """组装标题、分数、墙、蛇、食物、指引与预览提示。"""  # 函数说明
-    canvas = _new_canvas()  # 新建画布
-    _draw_title(canvas)  # 画标题
-    _draw_score(canvas, state)  # 画右上角分数
-    _draw_board(canvas)  # 画灰色墙
-    _draw_snake(canvas, state)  # 画蛇
-    _draw_food(canvas, state)  # 画食物
-    _draw_guide(canvas)  # 画操作指引
-    _draw_preview_hint(canvas)  # 画预览提示
-    return canvas  # 返回组装完成的画布
+def _draw_restart_icon(surface: pygame.Surface, center: tuple[int, int],  # 图标中心与颜色
+                       color: tuple[int, int, int]) -> None:  # 绘制重试图标
+    """绘制开口向左的圆形未闭合箭头。"""  # 函数说明
+    radius, thickness = 26, 6  # 圆环半径与线宽
+    graphics.draw_ring_arc(surface, center, radius, thickness, color, 210, 510, steps=100)  # 缺口在左侧的圆环
+    end_angle = math.radians(150)  # 圆环下端（左下）角度
+    end_point = (center[0] + radius * math.cos(end_angle),  # 箭头起点横坐标
+                 center[1] + radius * math.sin(end_angle))  # 箭头起点纵坐标
+    direction = (-math.sin(end_angle), math.cos(end_angle))  # 沿缺口方向的切线
+    tip = (end_point[0] + direction[0] * 10, end_point[1] + direction[1] * 10)  # 箭头尖端
+    graphics.draw_arrow_head(surface, tip, direction, 16, color)  # 指向左侧缺口的箭头
 
 
-def render_game(state: GameState) -> Canvas:  # 游戏进行中的界面
-    """返回游戏画面（步骤 1 为静态展示）。"""  # 函数说明
-    return _base_scene(state)  # 直接返回公共场景
+def _base_scene(layout: Layout, state: GameState, show_food: bool) -> pygame.Surface:  # 组装公共场景
+    """绘制背景、棋盘、蛇、可选食物、标题与分数。"""  # 函数说明
+    surface = pygame.Surface(layout.window, pygame.SRCALPHA)  # 整窗画面
+    surface.fill((*config.COLOR_BG, 255))  # 填充窗口背景
+    _draw_board(surface, layout)  # 绘制墙体与内部背景
+    _draw_snake(surface, state)  # 绘制蛇
+    if show_food:  # 开始界面不显示食物位置
+        _draw_food(surface, state)  # 绘制食物
+    _draw_header(surface, layout, state)  # 绘制标题与分数
+    return surface  # 返回基础画面
 
 
-def render_start(state: GameState) -> Canvas:  # 开始界面
-    """返回带开始面板的界面。"""  # 函数说明
-    canvas = _base_scene(state)  # 先画公共场景
-    x = config.INTERIOR_LEFT + (config.INTERIOR_WIDTH - START_PANEL_WIDTH) // 2  # 水平居中
-    y = config.INTERIOR_TOP + (config.INTERIOR_HEIGHT - START_PANEL_HEIGHT) // 2  # 垂直居中
-    _draw_panel(canvas, x, y, START_PANEL_WIDTH, START_PANEL_HEIGHT, border_fg=config.TITLE_FG)  # 画青色边框面板
-    _put_panel_lines(canvas, x, y, START_PANEL_WIDTH, START_LINES)  # 写入开始界面文字
-    return canvas  # 返回画布
+def render_game(state: GameState, layout: Layout) -> pygame.Surface:  # 游戏画面
+    """返回运行中的游戏画面。"""  # 函数说明
+    surface = _base_scene(layout, state, show_food=True)  # 基础场景
+    _draw_footer(surface, layout, config.GUIDE_TEXT)  # 游戏操作指引
+    return surface  # 返回画面
 
 
-def render_pause(state: GameState) -> Canvas:  # 暂停界面
-    """返回左上角显示暂停面板的界面。"""  # 函数说明
-    canvas = _base_scene(state)  # 先画公共场景
-    _draw_panel(canvas, PAUSE_PANEL_X, PAUSE_PANEL_Y, PAUSE_PANEL_WIDTH, PAUSE_PANEL_HEIGHT,  # 左上角暂停面板
-                border_fg=config.TITLE_FG)  # 在左上角画暂停面板
-    _put_panel_lines(canvas, PAUSE_PANEL_X, PAUSE_PANEL_Y, PAUSE_PANEL_WIDTH, PAUSE_LINES)  # 写入暂停文字
-    return canvas  # 返回画布
+def render_start(state: GameState, layout: Layout) -> pygame.Surface:  # 开始界面
+    """返回带开始面板、且不显示食物位置的开始界面。"""  # 函数说明
+    surface = _base_scene(layout, state, show_food=False)  # 基础场景（隐藏食物）
+    _draw_footer(surface, layout, "开始：按任意键开始游戏    Esc 退出")  # 开始界面指引
+    panel = layout.start_panel_rect()  # 开始面板矩形
+    _draw_panel(surface, panel, config.START_PANEL_ALPHA, config.COLOR_TITLE)  # 不透明青色边框面板
+    graphics.draw_text(surface, config.TITLE_TEXT, config.PANEL_TITLE_FONT_SIZE + 8,  # 面板大标题
+                       config.COLOR_TITLE, center=(panel.center[0], panel.top + 64))  # 大标题
+    line_y = panel.top + 140  # 第一行正文纵坐标
+    for line in config.START_LINES:  # 逐行绘制规则说明
+        graphics.draw_text(surface, line, config.PANEL_TEXT_FONT_SIZE, config.COLOR_TEXT,  # 居中正文
+                           center=(panel.center[0], line_y))  # 居中正文
+        line_y += 40  # 行距
+    graphics.draw_text(surface, config.START_HINT, config.PANEL_HINT_FONT_SIZE,  # 开始提示
+                       config.COLOR_ACCENT, center=(panel.center[0], panel.bottom - 48))  # 开始提示
+    return surface  # 返回画面
 
 
-def render_over(state: GameState) -> Canvas:  # 失败界面
-    """返回居中显示失败面板与最终得分的界面。"""  # 函数说明
-    canvas = _base_scene(state)  # 先画公共场景
-    x = config.INTERIOR_LEFT + (config.INTERIOR_WIDTH - OVER_PANEL_WIDTH) // 2  # 水平居中
-    y = config.INTERIOR_TOP + (config.INTERIOR_HEIGHT - OVER_PANEL_HEIGHT) // 2  # 垂直居中
-    _draw_panel(canvas, x, y, OVER_PANEL_WIDTH, OVER_PANEL_HEIGHT, border_fg=config.DANGER_FG)  # 画红色边框面板
-    lines = (  # 组装失败界面文字（含实时得分）
-        ("游戏结束", config.DANGER_FG),  # 第一行：失败标题
-        ("", "white"),  # 空行
-        (f"得分：{state.score}", "yellow"),  # 最终得分
-        ("", "white"),  # 空行
-        ("R 重试    Esc 退出", "white"),  # 重试与退出操作说明
-    )
-    _put_panel_lines(canvas, x, y, OVER_PANEL_WIDTH, lines)  # 写入失败界面文字
-    return canvas  # 返回画布
+def render_pause(state: GameState, layout: Layout) -> pygame.Surface:  # 暂停界面
+    """返回半透明遮罩 + 缩小一半的暂停面板与三个图标。"""  # 函数说明
+    surface = _base_scene(layout, state, show_food=True)  # 保留游戏画面
+    _draw_veil(surface, layout, config.PAUSE_VEIL_ALPHA)  # 棋盘整体压暗
+    panel = layout.pause_panel_rect()  # 暂停面板矩形（约为旧版一半）
+    _draw_panel(surface, panel, config.PANEL_ALPHA, config.COLOR_TITLE)  # 半透明面板
+    centers = layout.pause_icon_centers()  # 三个图标中心
+    _draw_exit_icon(surface, centers[0], config.COLOR_TEXT)  # 左侧退出图标
+    _draw_play_icon(surface, centers[1], config.COLOR_ACCENT)  # 中间实心向右三角形
+    _draw_restart_icon(surface, centers[2], config.COLOR_TEXT)  # 右侧开口向左的圆形箭头
+    for center, label in zip(centers, config.PAUSE_LABELS):  # 逐个绘制图标标签
+        graphics.draw_text(surface, label, config.LABEL_FONT_SIZE, config.COLOR_DIM_TEXT,  # 图标标签
+                           center=(center[0], center[1] + 50), shadow=True)  # 图标下方灰色小字
+    _draw_footer(surface, layout, config.PAUSE_HINT)  # 暂停操作指引
+    return surface  # 返回画面
+
+
+def render_over(state: GameState, layout: Layout) -> pygame.Surface:  # 结束界面
+    """返回保留蛇与食物最后位置的半透明结束界面。"""  # 函数说明
+    surface = _base_scene(layout, state, show_food=True)  # 保留最后一帧的蛇和食物位置
+    _draw_veil(surface, layout, config.OVER_VEIL_ALPHA)  # 轻微压暗，最后位置清晰可见
+    panel = layout.over_panel_rect()  # 结束面板矩形
+    _draw_panel(surface, panel, config.PANEL_ALPHA, config.COLOR_DANGER)  # 半透明红色边框面板
+    graphics.draw_text(surface, "游戏结束", config.PANEL_TITLE_FONT_SIZE, config.COLOR_DANGER,  # 失败标题
+                       center=(panel.center[0], panel.top + 64), shadow=True)  # 失败标题
+    graphics.draw_text(surface, f"得分：{state.score}", 32, config.COLOR_BODY,  # 最终得分
+                       center=(panel.center[0], panel.top + 128), shadow=True)  # 最终得分
+    graphics.draw_text(surface, config.OVER_HINT, config.PANEL_HINT_FONT_SIZE, config.COLOR_TEXT,  # 重试提示
+                       center=(panel.center[0], panel.bottom - 52), shadow=True)  # 重试与退出提示
+    _draw_footer(surface, layout, "结束：R 重试    Esc 退出")  # 底部操作指引
+    return surface  # 返回画面
 
 
 BUILDERS = {  # 界面名到绘制函数的映射
     "game": render_game,  # 游戏画面
     "start": render_start,  # 开始界面
     "pause": render_pause,  # 暂停界面
-    "over": render_over,  # 失败界面
+    "over": render_over,  # 结束界面
 }  # 界面映射结束
 
 
-def render(screen: str, state: GameState) -> Canvas:  # 按名称渲染界面
+def render(screen: str, state: GameState, layout: Layout) -> pygame.Surface:  # 按名称渲染界面
     """根据界面名调用对应绘制函数。"""  # 函数说明
-    if screen not in BUILDERS:  # 校验界面名是否合法
-        raise ValueError(f"未知界面：{screen}")  # 抛出明确错误
-    return BUILDERS[screen](state)  # 调用对应绘制函数
+    if screen not in BUILDERS:  # 校验界面名
+        raise ValueError(f"未知界面：{screen}")  # 抛出错误
+    return BUILDERS[screen](state, layout)  # 调用对应绘制函数

@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"  # 使用 setuptools 构建后端
 
 [project]  # 项目元数据
 name = "greedy-snake"  # 项目名称
-version = "0.1.0"  # 项目版本
-description = "终端贪吃蛇小游戏（TUI，实现步骤 1：静态界面）"  # 项目描述
+version = "0.2.0"  # 项目版本
+description = "贪吃蛇图形小游戏（pygame，实现步骤 1：界面）"  # 项目描述
 requires-python = ">=3.10"  # 最低 Python 版本
-dependencies = []  # 不依赖任何第三方库
+dependencies = ["pygame-ce>=2.5.8"]  # 需要 pygame-ce 图形库
 
 [tool.setuptools.packages.find]  # 包查找配置
 where = ["src"]  # 源目录为 src
