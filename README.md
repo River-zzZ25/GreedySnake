@@ -32,11 +32,11 @@ python -m pip install -r requirements.txt
 ```bash
 # Ubuntu 22.04
 sudo apt update
-sudo apt install -y python3-pip fonts-noto-cjk   # fonts-noto-cjk 用于显示中文
-python3 -m pip install -r requirements.txt
+sudo apt install -y python3-venv fonts-noto-cjk   # venv 用于隔离依赖，字体用于显示中文
 ```
 
-> 没有安装 pygame-ce 时运行会提示 `No module named 'pygame'`。
+Ubuntu 首次运行 `bash scripts/run.sh` 时会创建项目内的 `.venv` 并安装 `requirements.txt`；后续启动会复用该环境。
+
 > Ubuntu 若缺少中文字体，文字可能显示为方框，安装 `fonts-noto-cjk` 即可。
 
 ## 运行方式
