@@ -1,12 +1,13 @@
-"""应用逻辑：pygame 窗口循环、暂停触发与鼠标交互。"""  # 模块说明
+"""应用逻辑：连续物理更新、虚拟摇杆、暂停触发与鼠标交互。"""  # 模块说明
 
-import time  # 判断连按两次 P 的时间窗口
+import math  # 合成多个按键的摇杆向量
+import time  # 使用单调时钟控制连续运动与暂停触发
 
 import pygame  # 图形库
 
 from . import config, screens  # 配置与界面渲染
 from .layout import Layout  # 布局
-from .state import create_initial_state  # 初始状态
+from .state import advance_state, create_initial_state  # 连续更新与初始状态
 
 PREVIEW_KEYS = {  # 数字键预览界面（临时，便于验收）
     pygame.K_1: "game",  # 1：游戏画面
@@ -14,77 +15,148 @@ PREVIEW_KEYS = {  # 数字键预览界面（临时，便于验收）
     pygame.K_3: "pause",  # 3：暂停界面
     pygame.K_4: "over",  # 4：结束界面
 }  # 预览快捷键映射结束
+DIRECTION_BY_NAME = {  # WASD 名称到摇杆方向的映射
+    "w": (0.0, -1.0),  # W 向上施力
+    "a": (-1.0, 0.0),  # A 向左施力
+    "s": (0.0, 1.0),  # S 向下施力
+    "d": (1.0, 0.0),  # D 向右施力
+}  # 方向映射结束
+
+
+def _key_name(key: int, character: str = "") -> str:  # 规范化按键名称
+    """优先使用事件字符并忽略大小写，兼容大小写键盘输入。"""  # 函数说明
+    physical = pygame.key.name(key).casefold()  # 字母键的物理键名不受 Shift/Caps Lock 影响
+    if physical in DIRECTION_BY_NAME:  # 按下和释放均采用稳定的键名
+        return physical  # 避免松开 Shift 后无法释放旧的方向输入
+    if len(character) == 1 and character.isalpha():  # 事件包含单个字母字符
+        return character.casefold()  # 统一转为小写
+    return pygame.key.name(key).casefold()  # 使用 pygame 按键名并统一大小写
 
 
 class Controller:  # 游戏界面与输入控制器
-    """管理当前界面、游戏状态与暂停触发规则（不依赖窗口，便于测试）。"""  # 类说明
+    """管理连续蛇状态、按住的 WASD、界面状态与暂停流程。"""  # 类说明
 
     def __init__(self, layout: Layout, seed: int | None = None):  # 构造控制器
         self.layout = layout  # 布局
         self.state = create_initial_state(layout, seed)  # 初始游戏状态
         self.screen = "start"  # 默认显示开始界面
-        self.last_press_time: float | None = None  # 上一次按 P 的时间（None 表示还没按过）
+        self.last_press_time: float | None = None  # 上一次按 P 的时间
+        self.last_update_time: float | None = None  # 上一次物理更新的时间
+        self.held_keys: set[str] = set()  # 当前仍按住的 WASD
         self.quit = False  # 是否退出程序
 
     def reset(self) -> None:  # 重新开始
         """重置游戏状态并进入游戏画面。"""  # 函数说明
-        self.state = create_initial_state(self.layout)  # 新的初始状态
+        self.state = create_initial_state(self.layout)  # 新的一局不沿用旧随机状态
         self.screen = "game"  # 切换到游戏画面
-        self.last_press_time = None  # 重置按键计时
+        self.last_press_time = None  # 重置暂停计时
+        self.last_update_time = None  # 从当前时刻重新计时
+        self.held_keys.clear()  # 清除上一局残留按键
 
-    def handle_key(self, key: int, now: float) -> None:  # 处理按键
-        """根据当前界面与按键更新时间，规则包含 P 连按两次暂停。"""  # 函数说明
-        if key in (pygame.K_ESCAPE, pygame.K_q):  # Esc / Q 退出
+    def handle_key(self, key: int, now: float, character: str = "") -> None:  # 处理按键按下
+        """按当前界面处理按键，并记录按住的 WASD 施力。"""  # 函数说明
+        name = _key_name(key, character)  # 统一按键名称与大小写
+        direction = DIRECTION_BY_NAME.get(name)  # 判断是否为方向键
+        if key == pygame.K_ESCAPE or name == "q":  # Esc / Q 退出
             self.quit = True  # 标记退出
             return  # 结束处理
         if key in PREVIEW_KEYS:  # 数字键切换预览界面
             self.screen = PREVIEW_KEYS[key]  # 更新界面
-            self.last_press_time = None  # 重置计时
+            self.last_press_time = None  # 重置暂停计时
+            self.last_update_time = None  # 重置物理计时
+            self.held_keys.clear()  # 预览切换不保留摇杆输入
             return  # 结束处理
         if self.screen == "start":  # 开始界面按任意键开始
+            if direction is not None:  # 若开始键本身是 WASD
+                self.held_keys.add(name)  # 从开始这一帧起显示摇杆偏移
             self.screen = "game"  # 进入游戏画面
-            self.last_press_time = None  # 重置计时
-        elif self.screen == "game":  # 游戏画面处理 P 键
-            if key == pygame.K_p:  # 按下 P
+            self.last_press_time = None  # 重置暂停计时
+            self.last_update_time = None  # 从进入游戏时开始计时
+        elif self.screen == "game":  # 游戏画面处理方向与暂停
+            if direction is not None:  # 按下 W/A/S/D
+                self.held_keys.add(name)  # 持续施力直到收到 KEYUP
+            elif name == "p":  # 按下 P
                 if (self.last_press_time is not None  # 已经按过一次 P
                         and now - self.last_press_time <= config.PAUSE_DOUBLE_WINDOW):  # 距上次足够近
                     self.screen = "pause"  # 连按两次才暂停
-                    self.last_press_time = None  # 重置计时
+                    self.last_press_time = None  # 重置暂停计时
+                    self.last_update_time = None  # 暂停期间不积累时间
                 else:  # 第一次按 P
                     self.last_press_time = now  # 记录本次时间
         elif self.screen == "pause":  # 暂停界面按键
-            if key == pygame.K_p:  # 按一次 P 继续
+            if direction is not None:  # 记录暂停期间新按住的方向键
+                self.held_keys.add(name)  # 恢复时仍按住才施力，KEYUP 会正常清除
+            elif name == "p":  # 按一次 P 继续
                 self.screen = "game"  # 回到游戏画面
-                self.last_press_time = None  # 重置计时
-            elif key == pygame.K_r:  # 按 R 重试
+                self.last_press_time = None  # 重置暂停计时
+                self.last_update_time = None  # 恢复后重新计时
+            elif name == "r":  # 按 R 重试
                 self.reset()  # 重开一局
         elif self.screen == "over":  # 结束界面按键
-            if key == pygame.K_r:  # 按 R 重试
+            if name == "r":  # 按 R 重试
                 self.reset()  # 重开一局
+
+    def handle_key_up(self, key: int, character: str = "") -> None:  # 处理按键释放
+        """释放 WASD 后停止对应施力，使虚拟摇杆回到中心。"""  # 函数说明
+        name = _key_name(key, character)  # 统一按键名称
+        if name in DIRECTION_BY_NAME:  # 仅处理方向键释放
+            self.held_keys.discard(name)  # 清除持续施力
+
+    def joystick_input(self) -> tuple[float, float]:  # 获取当前摇杆向量
+        """合成当前按住的 WASD，返回归一化后的摇杆偏移方向。"""  # 函数说明
+        if self.screen != "game":  # 暂停或结束时摇杆居中
+            return (0.0, 0.0)  # 非游戏界面不施力
+        x = sum(DIRECTION_BY_NAME[name][0] for name in self.held_keys)  # 合成横向输入
+        y = sum(DIRECTION_BY_NAME[name][1] for name in self.held_keys)  # 合成纵向输入
+        length = math.hypot(x, y)  # 计算合成向量长度
+        if length <= 1e-9:  # 没有按住方向键
+            return (0.0, 0.0)  # 摇杆保持中心
+        return (x / length, y / length)  # 对角线输入保持统一施力强度
+
+    def lose_focus(self) -> None:  # 窗口失去焦点
+        """清除可能在其他窗口释放的按键，防止回来后持续转弯。"""  # 函数说明
+        self.held_keys.clear()  # 清除方向输入
+        self.last_update_time = None  # 恢复时不积累离开期间的时间
+        self.last_press_time = None  # 丢弃旧暂停按键时间
+
+    def update(self, now: float) -> None:  # 根据时间推进连续物理
+        """按真实时间平滑移动蛇，并在几何碰撞时进入结束界面。"""  # 函数说明
+        if self.screen != "game":  # 非游戏状态不推进蛇
+            self.last_update_time = None  # 清除计时，防止暂停后补走
+            return  # 保持当前状态
+        if self.last_update_time is None:  # 刚进入游戏或从暂停恢复
+            self.last_update_time = now  # 从当前时刻开始计时
+            return  # 尚未发生时间流逝
+        dt = max(0.0, min(now - self.last_update_time, config.MAX_FRAME_DT))  # 限制单帧步长
+        self.last_update_time = now  # 记录本次物理更新时间
+        hit = advance_state(self.state, self.layout, dt, self.joystick_input())  # 连续推进并处理碰撞
+        if hit:  # 本帧撞墙或撞到身体
+            self.screen = "over"  # 显示结束界面
+            self.last_update_time = None  # 结束后停止物理计时
 
     def handle_click(self, position: tuple[int, int], now: float) -> None:  # 处理鼠标单击
         """根据当前界面与点击位置执行暂停、继续、重试或退出。"""  # 函数说明
         del now  # 单击逻辑不需要时间参数
+        self.last_press_time = None  # 鼠标操作后重新计算双按 P 的时间窗口
+        self.last_update_time = None  # 切换界面后重新计时
         if self.screen == "start":  # 开始界面单击开始
             self.screen = "game"  # 进入游戏画面
-            self.last_press_time = None  # 重置按键计时
         elif self.screen == "game":  # 游戏画面单击暂停
             self.screen = "pause"  # 进入暂停界面
         elif self.screen == "pause":  # 暂停界面按图标区域判断
-            exit_rect, play_rect, restart_rect = self.layout.pause_icon_rects()  # 三个图标判定区域
+            exit_rect, _play_rect, restart_rect = self.layout.pause_icon_rects()  # 三个图标判定区域
             if exit_rect.contains(position):  # 点中左侧退出图标
                 self.quit = True  # 退出程序
             elif restart_rect.contains(position):  # 点中右侧重试图标
                 self.reset()  # 重开一局
             else:  # 点中其他位置（含中间继续图标）
                 self.screen = "game"  # 继续游戏
-                self.last_press_time = None  # 重置计时
         elif self.screen == "over":  # 结束界面单击重试
             self.reset()  # 重开一局
 
 
 def run(seed: int | None = None) -> None:  # 运行图形窗口
-    """创建 pygame 窗口并进入事件循环。"""  # 函数说明
+    """创建 pygame 窗口并进入高刷新率事件循环。"""  # 函数说明
     pygame.init()  # 初始化 pygame
     try:  # 保证退出时清理 pygame
         window = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))  # 创建窗口
@@ -97,14 +169,20 @@ def run(seed: int | None = None) -> None:  # 运行图形窗口
                 if event.type == pygame.QUIT:  # 关闭窗口
                     controller.quit = True  # 标记退出
                 elif event.type == pygame.KEYDOWN:  # 键盘按下
-                    controller.handle_key(event.key, time.monotonic())  # 交给控制器
+                    controller.handle_key(event.key, time.monotonic(), getattr(event, "unicode", ""))  # 传入字符兼容大小写
+                elif event.type == pygame.KEYUP:  # 键盘释放
+                    controller.handle_key_up(event.key, getattr(event, "unicode", ""))  # 解除 WASD 施力
+                elif event.type == pygame.WINDOWFOCUSLOST:  # 切换到其他窗口
+                    controller.lose_focus()  # 清除可能无法收到释放事件的方向键
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # 鼠标左键
                     controller.handle_click(event.pos, time.monotonic())  # 交给控制器
             if controller.quit:  # 需要退出
                 break  # 跳出循环
-            frame = screens.render(controller.screen, controller.state, layout)  # 渲染当前界面
+            now = time.monotonic()  # 为一帧使用同一个时间戳
+            controller.update(now)  # 按真实时间连续移动蛇
+            frame = screens.render(controller.screen, controller.state, layout, controller.joystick_input())  # 绘制蛇与摇杆
             window.blit(frame, (0, 0))  # 绘制到窗口
             pygame.display.flip()  # 刷新显示
-            clock.tick(config.FPS)  # 控制帧率
+            clock.tick(config.FPS)  # 控制高刷新率
     finally:  # 无论是否异常都清理
         pygame.quit()  # 关闭 pygame

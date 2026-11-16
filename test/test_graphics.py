@@ -73,5 +73,29 @@ class ShapeTests(unittest.TestCase):  # 图形绘制测试
     def test_triangle(self):  # 实心三角形
         surface = make_surface()  # 测试画布
         graphics.draw_triangle(surface, (150, 100), 30, 50, config.COLOR_ACCENT)  # 尖端向右的三角形
-        self.assertEqual(pixel(surface, 149, 100), config.COLOR_ACCENT)  # 尖端附近被填充
+        self.assertEqual(pixel(surface, 145, 100), config.COLOR_ACCENT)  # 尖端附近被填充
         self.assertEqual(pixel(surface, 149, 40), config.COLOR_BG)  # 三角形外是背景
+
+
+class ContinuousRenderingTests(unittest.TestCase):  # 连续位置与摇杆显示验证
+    """小数位置和整体透明度应体现在实际像素里。"""  # 类说明
+
+    def test_fractional_circle_center_changes_pixels(self):  # 不足一个像素的移动也更新画面
+        first, second = make_surface(), make_surface()  # 两张相同画布
+        graphics.draw_circle(first, (100.0, 100.0), 18, config.COLOR_HEAD)  # 整数中心
+        graphics.draw_circle(second, (100.25, 100.0), 18, config.COLOR_HEAD)  # 四分之一像素偏移
+        self.assertNotEqual(pygame.image.tobytes(first, "RGBA"), pygame.image.tobytes(second, "RGBA"))  # 不会全部取整为同一帧
+
+    def test_joystick_whole_widget_is_40_percent_transparent(self):  # 控件整体透明度一致
+        surface = pygame.Surface((200, 200), pygame.SRCALPHA)  # 全透明背景
+        graphics.draw_joystick(surface, (100, 100), 46, 18, (0, 0), 22, config.COLOR_ACCENT, config.JOYSTICK_ALPHA)  # 居中摇杆
+        self.assertEqual(surface.get_at((100, 100)).a, 153)  # 摇杆中心为 60% 不透明
+        self.assertEqual(surface.get_at((100, 70)).a, 153)  # 底座也为 60% 不透明
+        self.assertEqual(surface.get_at((0, 0)).a, 0)  # 控件之外仍透明
+
+    def test_joystick_offset_and_recenter(self):  # 偏移只体现当前输入
+        idle, held, released = make_surface(), make_surface(), make_surface()  # 三个时刻
+        for surface, vector in ((idle, (0, 0)), (held, (0, -1)), (released, (0, 0))):  # 按住上键再松开
+            graphics.draw_joystick(surface, (100, 100), 46, 18, vector, 22, config.COLOR_ACCENT, config.JOYSTICK_ALPHA)  # 绘制对应摇杆
+        self.assertNotEqual(pixel(held, 100, 78), pixel(idle, 100, 78))  # 摇杆中心向上偏移
+        self.assertEqual(pygame.image.tobytes(idle, "RGBA"), pygame.image.tobytes(released, "RGBA"))  # 释放后精确回中

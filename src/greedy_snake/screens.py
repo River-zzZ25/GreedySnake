@@ -1,4 +1,4 @@
-"""四类界面渲染：游戏、开始、暂停、结束（步骤 1）。"""  # 模块说明
+"""四类界面渲染：连续蛇运动、虚拟摇杆、开始、暂停和结束。"""  # 模块说明
 
 import math  # 计算重试图标的箭头方向
 
@@ -37,9 +37,12 @@ def _draw_snake(surface: pygame.Surface, state: GameState) -> None:  # 绘制蛇
 
 
 def _draw_food(surface: pygame.Surface, state: GameState) -> None:  # 绘制食物
-    """绘制绿色空心正方形食物。"""  # 函数说明
-    x, y = state.food  # 食物左上角
-    rect = pygame.Rect(x, y, config.FOOD_SIDE, config.FOOD_SIDE)  # 食物正方形
+    """以连续中心坐标绘制绿色空心正方形食物。"""  # 函数说明
+    if state.food is None:  # 没有可放食物的空间
+        return  # 不绘制占据身体的兜底食物
+    cx, cy = state.food  # 食物中心
+    rect = (cx - config.FOOD_SIDE / 2, cy - config.FOOD_SIDE / 2,  # 对齐实际中心而不取整
+            config.FOOD_SIDE, config.FOOD_SIDE)  # 与碰撞检测相同的外边界
     graphics.draw_hollow_square(surface, rect, config.COLOR_FOOD, config.FOOD_OUTLINE)  # 只画边框，形成空心
 
 
@@ -111,7 +114,8 @@ def _draw_restart_icon(surface: pygame.Surface, center: tuple[int, int],  # 图�
     graphics.draw_arrow_head(surface, tip, direction, 16, color)  # 指向左侧缺口的箭头
 
 
-def _base_scene(layout: Layout, state: GameState, show_food: bool) -> pygame.Surface:  # 组装公共场景
+def _base_scene(layout: Layout, state: GameState, show_food: bool,  # 组装公共场景
+                joystick: tuple[float, float] = (0.0, 0.0)) -> pygame.Surface:  # 可选摇杆输入
     """绘制背景、棋盘、蛇、可选食物、标题与分数。"""  # 函数说明
     surface = pygame.Surface(layout.window, pygame.SRCALPHA)  # 整窗画面
     surface.fill((*config.COLOR_BG, 255))  # 填充窗口背景
@@ -120,12 +124,17 @@ def _base_scene(layout: Layout, state: GameState, show_food: bool) -> pygame.Sur
     if show_food:  # 开始界面不显示食物位置
         _draw_food(surface, state)  # 绘制食物
     _draw_header(surface, layout, state)  # 绘制标题与分数
+    if show_food:  # 游戏相关画面显示虚拟摇杆
+        graphics.draw_joystick(surface, config.JOYSTICK_CENTER, config.JOYSTICK_BASE_RADIUS,  # 摇杆底座
+                                config.JOYSTICK_KNOB_RADIUS, joystick, config.JOYSTICK_MAX_OFFSET,  # 摇杆偏移
+                                config.COLOR_ACCENT, config.JOYSTICK_ALPHA)  # 摇杆颜色与透明度
     return surface  # 返回基础画面
 
 
-def render_game(state: GameState, layout: Layout) -> pygame.Surface:  # 游戏画面
+def render_game(state: GameState, layout: Layout,  # 游戏画面
+                joystick: tuple[float, float] = (0.0, 0.0)) -> pygame.Surface:  # 当前摇杆输入
     """返回运行中的游戏画面。"""  # 函数说明
-    surface = _base_scene(layout, state, show_food=True)  # 基础场景
+    surface = _base_scene(layout, state, show_food=True, joystick=joystick)  # 基础场景
     _draw_footer(surface, layout, config.GUIDE_TEXT)  # 游戏操作指引
     return surface  # 返回画面
 
@@ -150,7 +159,7 @@ def render_start(state: GameState, layout: Layout) -> pygame.Surface:  # 开始�
 
 def render_pause(state: GameState, layout: Layout) -> pygame.Surface:  # 暂停界面
     """返回半透明遮罩 + 缩小一半的暂停面板与三个图标。"""  # 函数说明
-    surface = _base_scene(layout, state, show_food=True)  # 保留游戏画面
+    surface = _base_scene(layout, state, show_food=True, joystick=(0.0, 0.0))  # 保留游戏画面但固定摇杆中心
     _draw_veil(surface, layout, config.PAUSE_VEIL_ALPHA)  # 棋盘整体压暗
     panel = layout.pause_panel_rect()  # 暂停面板矩形（约为旧版一半）
     _draw_panel(surface, panel, config.PANEL_ALPHA, config.COLOR_TITLE)  # 半透明面板
@@ -167,7 +176,7 @@ def render_pause(state: GameState, layout: Layout) -> pygame.Surface:  # 暂停�
 
 def render_over(state: GameState, layout: Layout) -> pygame.Surface:  # 结束界面
     """返回保留蛇与食物最后位置的半透明结束界面。"""  # 函数说明
-    surface = _base_scene(layout, state, show_food=True)  # 保留最后一帧的蛇和食物位置
+    surface = _base_scene(layout, state, show_food=True, joystick=(0.0, 0.0))  # 保留最后一帧的蛇和食物位置
     _draw_veil(surface, layout, config.OVER_VEIL_ALPHA)  # 轻微压暗，最后位置清晰可见
     panel = layout.over_panel_rect()  # 结束面板矩形
     _draw_panel(surface, panel, config.PANEL_ALPHA, config.COLOR_DANGER)  # 半透明红色边框面板
@@ -189,8 +198,10 @@ BUILDERS = {  # 界面名到绘制函数的映射
 }  # 界面映射结束
 
 
-def render(screen: str, state: GameState, layout: Layout) -> pygame.Surface:  # 按名称渲染界面
+def render(screen: str, state: GameState, layout: Layout, joystick: tuple[float, float] = (0.0, 0.0)) -> pygame.Surface:  # 按名称渲染界面
     """根据界面名调用对应绘制函数。"""  # 函数说明
     if screen not in BUILDERS:  # 校验界面名
         raise ValueError(f"未知界面：{screen}")  # 抛出错误
-    return BUILDERS[screen](state, layout)  # 调用对应绘制函数
+    if screen == "game":  # 只有运行中的界面显示方向偏移
+        return render_game(state, layout, joystick)  # 绘制当前按住的摇杆方向
+    return BUILDERS[screen](state, layout)  # 其他界面使用居中的摇杆

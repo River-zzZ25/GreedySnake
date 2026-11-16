@@ -4,7 +4,12 @@
 
 WINDOW_WIDTH = 1200  # 窗口宽度（兼顾 1366×768 屏幕）
 WINDOW_HEIGHT = 720  # 窗口高度
-FPS = 60  # 目标帧率
+FPS = 120  # 目标刷新率，保证连续转向平滑
+MAX_FRAME_DT = 0.05  # 单帧最大物理步长，避免窗口卡顿后瞬移
+SNAKE_SPEED = 126.0  # 蛇的前进速度，保持上一阶段约每秒两格的物理速度
+TURN_RATE = 3.141592653589793  # 最大转速为每秒 180 度，形成有半径的曲线
+TURN_RESPONSE = 5.0  # 朝目标方向转动的响应强度，接近目标时逐渐放缓
+PHYSICS_DT = 1 / 240  # 小步物理积分，曲线与碰撞不依赖显示刷新率
 MARGIN = 24  # 窗口左右边距
 HEADER_HEIGHT = 64  # 顶部标题与分数区域高度
 FOOTER_HEIGHT = 56  # 底部操作指引区域高度
@@ -12,15 +17,24 @@ WALL_THICKNESS = 12  # 灰色墙体厚度
 
 # ---------------- 图形比例（题目要求 头 3 : 身 3 : 食物 1.5） ----------------  # 分组说明
 
-UNIT = 24  # 一个比例单位对应的像素数
-SNAKE_DIAMETER = 3 * UNIT  # 蛇头与蛇身圆形直径 = 3 单位 = 72 像素
-SNAKE_RADIUS = SNAKE_DIAMETER // 2  # 蛇圆半径 = 36 像素
-SNAKE_OVERLAP = SNAKE_RADIUS / 4  # 相邻圆形重叠长度 = 半径的 1/4 = 9 像素
-SNAKE_SPACING = 2 * SNAKE_RADIUS - SNAKE_OVERLAP  # 相邻圆心距离 = 63 像素
-FOOD_SIDE = int(1.5 * UNIT)  # 空心正方形食物边长 = 1.5 单位 = 36 像素
-FOOD_OUTLINE = 5  # 空心正方形边框粗细
-FOOD_MARGIN = 48  # 食物距离墙的最小像素距离
+UNIT = 12  # 直径和边长减半，使面积缩到原来的四分之一
+SNAKE_DIAMETER = 3 * UNIT  # 蛇头与蛇身圆形直径 = 36 像素
+SNAKE_RADIUS = SNAKE_DIAMETER / 2  # 蛇圆半径 = 18 像素
+SNAKE_OVERLAP = SNAKE_RADIUS / 4  # 相邻圆形重叠长度 = 半径的 1/4 = 4.5 像素
+SNAKE_SPACING = 2 * SNAKE_RADIUS - SNAKE_OVERLAP  # 沿轨迹的相邻圆心距为 31.5 像素
+FOOD_SIDE = int(1.5 * UNIT)  # 空心正方形食物边长 = 18 像素
+FOOD_OUTLINE = 2  # 空心正方形边框粗细
+FOOD_MARGIN = 12  # 食物距离墙的最小像素距离
 DARKEN_FACTOR = 0.55  # 圆形重叠区域颜色加深系数
+
+# ---------------- 虚拟摇杆 ----------------  # 分组说明
+
+JOYSTICK_CENTER = (112, 568)  # 摇杆底座中心，位于棋盘左下方
+JOYSTICK_BASE_RADIUS = 46  # 摇杆底座半径
+JOYSTICK_KNOB_RADIUS = 18  # 摇杆中心圆半径
+JOYSTICK_MAX_OFFSET = 22  # 摇杆中心最大偏移
+JOYSTICK_TRANSPARENCY = 0.40  # 摇杆透明度为 40%
+JOYSTICK_ALPHA = int(255 * (1 - JOYSTICK_TRANSPARENCY))  # 40% 透明对应 60% 不透明
 
 # ---------------- 颜色（RGB 三元组） ----------------  # 分组说明
 
@@ -72,12 +86,12 @@ LABEL_FONT_SIZE = 18  # 图标下方的小标签字号
 # ---------------- 界面文案 ----------------  # 分组说明
 
 TITLE_TEXT = "贪 吃 蛇"  # 顶部标题
-GUIDE_TEXT = "操作指引：W/A/S/D 移动    P 连按两次 / 鼠标单击 暂停    吃到食物 +1 分"  # 游戏内操作指引
+GUIDE_TEXT = "操作指引：按住 W/A/S/D 转向    松开沿当前方向前进    P 连按两次 / 单击 暂停"  # 游戏内操作指引
 PAUSE_HINT = "暂停中：点击 / 按 P 继续    点击右侧重试图标重试    点击左侧图标退出"  # 暂停界面底部提示
 OVER_HINT = "R 重试    Esc 退出"  # 结束界面底部提示
 START_LINES = (  # 开始面板正文
-    "W / A / S / D   移动小蛇",  # 移动说明
-    "吃到食物 +1 分，小蛇变长一格",  # 得分与成长规则
+    "按住 W / A / S / D   平滑转向",  # 移动说明
+    "松开继续前进，吃食物 +1 分并增长",  # 得分与成长规则
     "撞墙或撞到自己，游戏结束",  # 失败规则
     "P 连按两次 / 鼠标单击   暂停",  # 暂停说明
 )  # 开始面板正文结束

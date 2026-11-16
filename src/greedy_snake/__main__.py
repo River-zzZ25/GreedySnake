@@ -16,7 +16,7 @@ SCREENSHOT_SCREENS = ("game", "start", "pause", "over")  # 需要生成截图的
 
 def build_parser() -> argparse.ArgumentParser:  # 构造参数解析器
     """创建并返回命令行参数解析器。"""  # 函数说明
-    parser = argparse.ArgumentParser(prog="greedy-snake", description="贪吃蛇（实现步骤 1：界面）")  # 程序名与说明
+    parser = argparse.ArgumentParser(prog="greedy-snake", description="贪吃蛇（实现步骤 2：移动、成长、计分与碰撞）")  # 程序名与说明
     parser.add_argument("--screenshots", type=pathlib.Path, default=None,  # 截图模式参数
                         help="渲染四张界面截图到指定目录后退出（无需打开窗口）")  # 截图模式参数
     parser.add_argument("--seed", type=int, default=None, help="食物随机种子，便于复现画面")  # 随机种子

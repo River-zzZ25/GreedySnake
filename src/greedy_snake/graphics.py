@@ -5,7 +5,6 @@ import os  # 判断字体文件是否存在
 
 import pygame  # 图形库
 import pygame.font  # 字体子模块
-import pygame.gfxdraw  # 抗锯齿绘图子模块
 
 from . import config  # 颜色与尺寸配置
 
@@ -24,6 +23,9 @@ _font_cache: dict[int, pygame.font.Font] = {}  # 字号到字体的缓存
 
 def get_font(size: int) -> pygame.font.Font:  # 获取中文字体
     """按字号加载中文字体，找不到中文字体时退回默认字体。"""  # 函数说明
+    if not pygame.font.get_init():  # 重新渲染前可能已经退出过 pygame
+        _font_cache.clear()  # 旧 Font 对象在字体模块退出后失效
+        pygame.font.init()  # 重建字体环境
     if size in _font_cache:  # 命中缓存
         return _font_cache[size]  # 直接返回
     pygame.font.init()  # 确保字体模块已初始化
@@ -57,19 +59,26 @@ def darken(color: tuple[int, int, int], factor: float) -> tuple[int, int, int]: 
 
 def draw_circle(surface: pygame.Surface, center: tuple[float, float],  # 中心点与半径
                 radius: float, color: tuple[int, int, int]) -> None:  # 绘制抗锯齿实心圆
-    """用 gfxdraw 绘制平滑实心圆。"""  # 函数说明
-    x, y, r = int(round(center[0])), int(round(center[1])), int(round(radius))  # 圆心的整数坐标与半径
-    pygame.gfxdraw.aacircle(surface, x, y, r, color)  # 绘制抗锯齿轮廓
-    pygame.gfxdraw.filled_circle(surface, x, y, r, color)  # 填充圆内部
+    """局部四倍采样保留小数圆心，缓慢移动时也不会整像素跳动。"""  # 函数说明
+    left, top = math.floor(center[0] - radius) - 1, math.floor(center[1] - radius) - 1  # 局部画布原点
+    size, scale = math.ceil(radius * 2) + 4, 4  # 只放大当前小圆的范围
+    layer = pygame.Surface((size * scale, size * scale), pygame.SRCALPHA)  # 四倍透明画布
+    local = (round((center[0] - left) * scale), round((center[1] - top) * scale))  # 保留亚像素圆心
+    pygame.draw.circle(layer, color, local, round(radius * scale))  # 画真实尺寸的实心圆
+    surface.blit(pygame.transform.smoothscale(layer, (size, size)), (left, top), special_flags=pygame.BLEND_PREMULTIPLIED)  # 平滑降采样后合成
 
 
 def draw_polygon(surface: pygame.Surface, points, color: tuple[int, int, int]) -> None:  # 绘制抗锯齿多边形
-    """用 gfxdraw 绘制平滑实心多边形。"""  # 函数说明
-    int_points = [(int(round(x)), int(round(y))) for x, y in points]  # 转换为整数坐标
-    if len(int_points) < 3:  # 少于三个点无法构成多边形
+    """局部四倍采样保留重叠轮廓的小数位置。"""  # 函数说明
+    if len(points) < 3:  # 少于三个点无法构成多边形
         return  # 直接返回
-    pygame.gfxdraw.aapolygon(surface, int_points, color)  # 绘制抗锯齿轮廓
-    pygame.gfxdraw.filled_polygon(surface, int_points, color)  # 填充多边形内部
+    left, top = math.floor(min(x for x, _ in points)) - 1, math.floor(min(y for _, y in points)) - 1  # 局部原点
+    width, height = math.ceil(max(x for x, _ in points)) - left + 2, math.ceil(max(y for _, y in points)) - top + 2  # 局部尺寸
+    scale = 4  # 与圆形使用相同亚像素精度
+    layer = pygame.Surface((width * scale, height * scale), pygame.SRCALPHA)  # 局部透明画布
+    local = [(round((x - left) * scale), round((y - top) * scale)) for x, y in points]  # 放大的局部顶点
+    pygame.draw.polygon(layer, color, local)  # 填充轮廓
+    surface.blit(pygame.transform.smoothscale(layer, (width, height)), (left, top), special_flags=pygame.BLEND_PREMULTIPLIED)  # 合成到原始尺寸画面
 
 
 def _sample_arc(center: tuple[float, float], radius: float, start: float, end: float,  # 圆弧参数
@@ -119,8 +128,15 @@ def lens_polygon(center_a: tuple[float, float], center_b: tuple[float, float],  
 
 def draw_hollow_square(surface: pygame.Surface, rect, color: tuple[int, int, int],  # 矩形与线宽
                        width: int) -> None:  # 绘制空心正方形
-    """绘制空心正方形边框。"""  # 函数说明
-    pygame.draw.rect(surface, color, pygame.Rect(rect), width=width)  # 画边框
+    """使用浮点矩形的真实外围绘制空心边框，与食物碰撞轮廓一致。"""  # 函数说明
+    x, y, span_x, span_y = rect  # 可以传入带小数坐标的矩形
+    left, top = math.floor(x) - 1, math.floor(y) - 1  # 局部画布原点
+    size = (math.ceil(span_x) + 4, math.ceil(span_y) + 4)  # 保留抗锯齿边缘
+    scale = 4  # 与蛇圆保持相同的亚像素精度
+    layer = pygame.Surface((size[0] * scale, size[1] * scale), pygame.SRCALPHA)  # 四倍画布
+    local = (round((x - left) * scale), round((y - top) * scale), round(span_x * scale), round(span_y * scale))  # 真实轮廓
+    pygame.draw.rect(layer, color, local, width=width * scale)  # 绘制向内的空心方块边框
+    surface.blit(pygame.transform.smoothscale(layer, size), (left, top), special_flags=pygame.BLEND_PREMULTIPLIED)  # 降采样并合成
 
 
 def draw_ring_arc(surface: pygame.Surface, center: tuple[float, float], radius: float,  # 圆心与半径
@@ -158,6 +174,28 @@ def draw_arrow_head(surface: pygame.Surface, tip: tuple[float, float],  # 尖端
               (base[0] + px * size * 0.55, base[1] + py * size * 0.55),  # 一侧底角
               (base[0] - px * size * 0.55, base[1] - py * size * 0.55)]  # 另一侧底角
     draw_polygon(surface, points, color)  # 填充箭头三角形
+
+
+def draw_joystick(surface: pygame.Surface, center: tuple[int, int], base_radius: int,  # 摇杆底座
+                  knob_radius: int, offset: tuple[float, float], max_offset: int,  # 摇杆中心偏移
+                  color: tuple[int, int, int], alpha: int) -> None:  # 绘制半透明虚拟摇杆
+    """绘制底座与摇杆中心；没有按住 WASD 时中心停在底座中央。"""  # 函数说明
+    margin = base_radius + max_offset + 4  # 临时图层边距
+    size = margin * 2  # 临时图层边长
+    layer = pygame.Surface((size, size), pygame.SRCALPHA)  # 独立透明图层
+    local_center = (margin, margin)  # 底座在图层中的中心
+    pygame.draw.circle(layer, (*config.COLOR_PANEL, 255), local_center, base_radius)  # 底座填充
+    pygame.draw.circle(layer, (*color, 255), local_center, base_radius, width=2)  # 底座边框
+    length = math.hypot(*offset)  # 计算输入向量长度
+    if length > 1:  # 防止超过最大偏移
+        scale = 1 / length  # 计算单位向量缩放比例
+        offset = (offset[0] * scale, offset[1] * scale)  # 限制摇杆中心偏移
+    knob_center = (int(round(local_center[0] + offset[0] * max_offset)),  # 摇杆中心横坐标
+                   int(round(local_center[1] + offset[1] * max_offset)))  # 摇杆中心纵坐标
+    pygame.draw.circle(layer, (*color, 255), knob_center, knob_radius)  # 绘制摇杆中心
+    pygame.draw.circle(layer, (*config.COLOR_TEXT, 255), knob_center, knob_radius, width=2)  # 绘制摇杆高光边
+    layer.set_alpha(alpha)  # 整个控件统一应用 40% 透明度，重叠处不增加不透明度
+    surface.blit(layer, (center[0] - margin, center[1] - margin))  # 合成到游戏画面
 
 
 def draw_text(surface: pygame.Surface, text: str, size: int, color: tuple[int, int, int],  # 文本与对齐参数

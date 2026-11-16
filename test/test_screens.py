@@ -1,5 +1,6 @@
 """四类界面颜色与布局单元测试（离屏渲染，无需窗口）。"""  # 模块说明
 
+import math  # 食物实色边框像素
 import unittest  # 标准库测试框架
 
 import pygame  # 图形库
@@ -56,9 +57,10 @@ class GameScreenTests(unittest.TestCase):  # 游戏画面测试
         self.assertEqual(pixel(self.surface, midpoint), expected)  # 重叠处颜色加深
 
     def test_food_hollow_square(self):  # 食物为绿色空心正方形
-        x, y = STATE.food  # 食物左上角
-        self.assertEqual(pixel(self.surface, (x, y)), config.COLOR_FOOD)  # 边框为绿色
-        center = (x + config.FOOD_SIDE // 2, y + config.FOOD_SIDE // 2)  # 食物中心
+        x, y = STATE.food  # 食物中心
+        edge = (math.ceil(x - config.FOOD_SIDE / 2), round(y))  # 边框内部的实色像素
+        self.assertEqual(pixel(self.surface, edge), config.COLOR_FOOD)  # 边框为绿色
+        center = (round(x), round(y))  # 食物中心像素
         self.assertEqual(pixel(self.surface, center), config.COLOR_BOARD)  # 中心是空的
 
     def test_score_white_top_right(self):  # 分数为白色并位于右上角
@@ -147,8 +149,8 @@ class OverScreenTests(unittest.TestCase):  # 结束界面测试
         self.assertNotEqual(color, config.COLOR_BG)  # 不是纯背景，仍能看到蛇头位置
 
     def test_final_food_visible(self):  # 食物最后位置仍可见
-        x, y = STATE.food  # 食物左上角
-        color = pixel(self.surface, (x, y))  # 食物边框像素
+        x, y = STATE.food  # 食物中心
+        color = pixel(self.surface, (math.ceil(x - config.FOOD_SIDE / 2), round(y)))  # 食物边框像素
         self.assertNotEqual(color, config.COLOR_FOOD)  # 已被半透明遮罩处理
         self.assertNotEqual(color, config.COLOR_BG)  # 不是纯背景
 
