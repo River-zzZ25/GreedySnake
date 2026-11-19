@@ -50,12 +50,12 @@ class LayoutTests(unittest.TestCase):  # 布局测试
         self.assertEqual(self.layout.interior.right,  # 右侧内边界
                          self.layout.board.right - config.WALL_THICKNESS)  # 右侧
 
-    def test_snake_ratio(self):  # 蛇圆直径比例为 3 个单位
-        self.assertEqual(config.SNAKE_DIAMETER, 3 * config.UNIT)  # 头与身体直径 3 单位
+    def test_snake_ratio(self):  # 蛇面积缩放
+        self.assertAlmostEqual((config.SNAKE_DIAMETER / 36) ** 2, 2 / 3)
 
-    def test_food_ratio(self):  # 食物边长比例为 1.5 个单位
-        self.assertEqual(config.FOOD_SIDE, int(1.5 * config.UNIT))  # 食物正方形边长 1.5 单位
-        self.assertEqual(config.FOOD_SIDE, config.SNAKE_DIAMETER // 2)  # 恰好为蛇直径的一半
+    def test_food_ratio(self):  # 食物面积缩放
+        self.assertAlmostEqual((config.FOOD_SIDE / 18) ** 2, 2 / 3)
+        self.assertAlmostEqual(config.FOOD_SIDE, config.SNAKE_DIAMETER / 2)
 
     def test_overlap_ratio(self):  # 重叠为半径的四分之一
         self.assertAlmostEqual(config.SNAKE_SPACING, 2 * config.SNAKE_RADIUS - config.SNAKE_RADIUS / 4)  # 圆心距

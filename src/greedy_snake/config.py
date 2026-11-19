@@ -1,12 +1,14 @@
 """全局配置：窗口、颜色、比例尺寸、透明度与界面文案。"""  # 模块说明
 
+import math
+
 # ---------------- 窗口与布局（单位：像素） ----------------  # 分组说明
 
 WINDOW_WIDTH = 1200  # 窗口宽度（兼顾 1366×768 屏幕）
 WINDOW_HEIGHT = 720  # 窗口高度
 FPS = 120  # 目标刷新率，保证连续转向平滑
 MAX_FRAME_DT = 0.05  # 单帧最大物理步长，避免窗口卡顿后瞬移
-SNAKE_SPEED = 126.0  # 蛇的前进速度，保持上一阶段约每秒两格的物理速度
+SNAKE_SPEED = 189.0  # 在上一阶段基础上提升 1.5 倍
 TURN_RATE = 3.141592653589793  # 最大转速为每秒 180 度，形成有半径的曲线
 TURN_RESPONSE = 5.0  # 朝目标方向转动的响应强度，接近目标时逐渐放缓
 PHYSICS_DT = 1 / 240  # 小步物理积分，曲线与碰撞不依赖显示刷新率
@@ -17,24 +19,29 @@ WALL_THICKNESS = 12  # 灰色墙体厚度
 
 # ---------------- 图形比例（题目要求 头 3 : 身 3 : 食物 1.5） ----------------  # 分组说明
 
-UNIT = 12  # 直径和边长减半，使面积缩到原来的四分之一
-SNAKE_DIAMETER = 3 * UNIT  # 蛇头与蛇身圆形直径 = 36 像素
-SNAKE_RADIUS = SNAKE_DIAMETER / 2  # 蛇圆半径 = 18 像素
-SNAKE_OVERLAP = SNAKE_RADIUS / 4  # 相邻圆形重叠长度 = 半径的 1/4 = 4.5 像素
-SNAKE_SPACING = 2 * SNAKE_RADIUS - SNAKE_OVERLAP  # 沿轨迹的相邻圆心距为 31.5 像素
-FOOD_SIDE = int(1.5 * UNIT)  # 空心正方形食物边长 = 18 像素
+UNIT = 12
+AREA_SCALE = math.sqrt(2 / 3)  # 面积缩为当前的 2/3
+SNAKE_DIAMETER = 36 * AREA_SCALE  # 直径约 29.4 像素
+SNAKE_RADIUS = SNAKE_DIAMETER / 2  # 蛇圆半径约 14.7 像素
+SNAKE_OVERLAP = SNAKE_RADIUS / 4  # 相邻圆形重叠长度为半径的 1/4
+SNAKE_SPACING = 2 * SNAKE_RADIUS - SNAKE_OVERLAP  # 沿轨迹的相邻圆心距约 25.7 像素
+FOOD_SIDE = 18 * AREA_SCALE  # 边长约 14.7 像素，面积约缩为 2/3
 FOOD_OUTLINE = 2  # 空心正方形边框粗细
 FOOD_MARGIN = 12  # 食物距离墙的最小像素距离
 DARKEN_FACTOR = 0.55  # 圆形重叠区域颜色加深系数
 
 # ---------------- 虚拟摇杆 ----------------  # 分组说明
 
-JOYSTICK_CENTER = (112, 568)  # 摇杆底座中心，位于棋盘左下方
-JOYSTICK_BASE_RADIUS = 46  # 摇杆底座半径
-JOYSTICK_KNOB_RADIUS = 18  # 摇杆中心圆半径
-JOYSTICK_MAX_OFFSET = 22  # 摇杆中心最大偏移
+JOYSTICK_BOX = (WINDOW_WIDTH - 268, 400, 220, 220)  # 右侧鼠标摇杆框，位于棋盘内
+JOYSTICK_CENTER = (JOYSTICK_BOX[0] + JOYSTICK_BOX[2] // 2,
+                   JOYSTICK_BOX[1] + JOYSTICK_BOX[3] // 2)  # 摇杆中心
+JOYSTICK_BASE_RADIUS = 72  # 框内底座半径
+JOYSTICK_KNOB_RADIUS = 20  # 摇杆中心圆半径
+JOYSTICK_MAX_OFFSET = 28  # 摇杆中心最大偏移
 JOYSTICK_TRANSPARENCY = 0.40  # 摇杆透明度为 40%
 JOYSTICK_ALPHA = int(255 * (1 - JOYSTICK_TRANSPARENCY))  # 40% 透明对应 60% 不透明
+MAX_FOOD_COUNT = 10  # 同时存在的食物上限
+INITIAL_FOOD_COUNT = 3  # 开局同时出现多个食物
 
 # ---------------- 颜色（RGB 三元组） ----------------  # 分组说明
 
@@ -67,7 +74,7 @@ PAUSE_PANEL_WIDTH = 400  # 暂停面板宽度（旧版约 800 像素的一半）
 PAUSE_PANEL_HEIGHT = 168  # 暂停面板高度（旧版约 336 像素的一半）
 PAUSE_ICON_SPACING = 110  # 暂停界面三个图标的中心间距
 PAUSE_ICON_HIT = 70  # 暂停图标鼠标点击判定区域边长
-PAUSE_DOUBLE_WINDOW = 0.6  # 连续按两次 P 的判定窗口（秒）
+PAUSE_DOUBLE_WINDOW = 0.6  # 连续按两次空格的判定窗口（秒）
 START_PANEL_WIDTH = 560  # 开始面板宽度
 START_PANEL_HEIGHT = 340  # 开始面板高度
 OVER_PANEL_WIDTH = 460  # 结束面板宽度
@@ -86,14 +93,15 @@ LABEL_FONT_SIZE = 18  # 图标下方的小标签字号
 # ---------------- 界面文案 ----------------  # 分组说明
 
 TITLE_TEXT = "贪 吃 蛇"  # 顶部标题
-GUIDE_TEXT = "操作指引：按住 W/A/S/D 转向    松开沿当前方向前进    P 连按两次 / 单击 暂停"  # 游戏内操作指引
-PAUSE_HINT = "暂停中：点击 / 按 P 继续    点击右侧重试图标重试    点击左侧图标退出"  # 暂停界面底部提示
-OVER_HINT = "R 重试    Esc 退出"  # 结束界面底部提示
+GUIDE_TEXT = "按住 WASD 或拖动右侧摇杆转向    松开继续前进    单击 / 空格连按两次暂停"
+PAUSE_HINT = "暂停中：单击 / 空格连按两次继续    右侧重试    左侧回主页面"
+OVER_HINT = "R 重试    Esc 回主页面"
 START_LINES = (  # 开始面板正文
     "按住 W / A / S / D   平滑转向",  # 移动说明
     "松开继续前进，吃食物 +1 分并增长",  # 得分与成长规则
     "撞墙或撞到自己，游戏结束",  # 失败规则
-    "P 连按两次 / 鼠标单击   暂停",  # 暂停说明
+    "空格连按两次 / 鼠标单击   暂停",  # 暂停说明
 )  # 开始面板正文结束
 START_HINT = "== 按任意键开始 =="  # 开始提示
 PAUSE_LABELS = ("退出", "继续", "重试")  # 暂停界面三个图标下方标签
+MENU_BUTTONS = ("开始游戏", "帮助", "退出")

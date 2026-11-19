@@ -38,12 +38,22 @@ def _draw_snake(surface: pygame.Surface, state: GameState) -> None:  # 绘制蛇
 
 def _draw_food(surface: pygame.Surface, state: GameState) -> None:  # 绘制食物
     """以连续中心坐标绘制绿色空心正方形食物。"""  # 函数说明
-    if state.food is None:  # 没有可放食物的空间
-        return  # 不绘制占据身体的兜底食物
-    cx, cy = state.food  # 食物中心
-    rect = (cx - config.FOOD_SIDE / 2, cy - config.FOOD_SIDE / 2,  # 对齐实际中心而不取整
-            config.FOOD_SIDE, config.FOOD_SIDE)  # 与碰撞检测相同的外边界
-    graphics.draw_hollow_square(surface, rect, config.COLOR_FOOD, config.FOOD_OUTLINE)  # 只画边框，形成空心
+    foods = getattr(state, "foods", [state.food] if state.food is not None else [])
+    for cx, cy in foods:
+        rect = (cx - config.FOOD_SIDE / 2, cy - config.FOOD_SIDE / 2,
+                config.FOOD_SIDE, config.FOOD_SIDE)
+        graphics.draw_hollow_square(surface, rect, config.COLOR_FOOD, config.FOOD_OUTLINE)
+
+
+def _draw_joystick_box(surface: pygame.Surface, joystick: tuple[float, float]) -> None:
+    """绘制右侧 220 像素鼠标摇杆区域。"""
+    x, y, width, height = config.JOYSTICK_BOX
+    layer = pygame.Surface((width, height), pygame.SRCALPHA)
+    pygame.draw.rect(layer, (*config.COLOR_PANEL, config.JOYSTICK_ALPHA), layer.get_rect(), 2)
+    surface.blit(layer, (x, y))
+    graphics.draw_joystick(surface, config.JOYSTICK_CENTER, config.JOYSTICK_BASE_RADIUS,
+                            config.JOYSTICK_KNOB_RADIUS, joystick, config.JOYSTICK_MAX_OFFSET,
+                            config.COLOR_ACCENT, config.JOYSTICK_ALPHA)
 
 
 def _draw_header(surface: pygame.Surface, layout: Layout, state: GameState) -> None:  # 绘制顶部信息
@@ -125,9 +135,7 @@ def _base_scene(layout: Layout, state: GameState, show_food: bool,  # 组装公�
         _draw_food(surface, state)  # 绘制食物
     _draw_header(surface, layout, state)  # 绘制标题与分数
     if show_food:  # 游戏相关画面显示虚拟摇杆
-        graphics.draw_joystick(surface, config.JOYSTICK_CENTER, config.JOYSTICK_BASE_RADIUS,  # 摇杆底座
-                                config.JOYSTICK_KNOB_RADIUS, joystick, config.JOYSTICK_MAX_OFFSET,  # 摇杆偏移
-                                config.COLOR_ACCENT, config.JOYSTICK_ALPHA)  # 摇杆颜色与透明度
+        _draw_joystick_box(surface, joystick)
     return surface  # 返回基础画面
 
 
@@ -155,6 +163,72 @@ def render_start(state: GameState, layout: Layout) -> pygame.Surface:  # 开始�
     graphics.draw_text(surface, config.START_HINT, config.PANEL_HINT_FONT_SIZE,  # 开始提示
                        config.COLOR_ACCENT, center=(panel.center[0], panel.bottom - 48))  # 开始提示
     return surface  # 返回画面
+
+
+def render_menu(state: GameState, layout: Layout) -> pygame.Surface:
+    surface = _base_scene(layout, state, show_food=False)
+    panel = layout.start_panel_rect()
+    _draw_panel(surface, panel, config.START_PANEL_ALPHA, config.COLOR_TITLE)
+    graphics.draw_text(surface, config.TITLE_TEXT, config.PANEL_TITLE_FONT_SIZE + 8,
+                       config.COLOR_TITLE, center=(panel.center[0], panel.top + 58))
+    for index, label in enumerate(config.MENU_BUTTONS):
+        y = panel.top + 140 + index * 58
+        button = pygame.Rect(panel.left + 120, y - 22, panel.width - 240, 44)
+        pygame.draw.rect(surface, config.COLOR_BOARD, button, border_radius=8)
+        pygame.draw.rect(surface, config.COLOR_ACCENT if index == 0 else config.COLOR_PANEL_BORDER,
+                         button, width=2, border_radius=8)
+        graphics.draw_text(surface, label, config.PANEL_TEXT_FONT_SIZE, config.COLOR_TEXT,
+                           center=button.center)
+    return surface
+
+
+def render_help(state: GameState, layout: Layout, page: int = 0) -> pygame.Surface:
+    surface = _base_scene(layout, state, show_food=False)
+    panel = layout.centered_rect(820, 470)
+    _draw_panel(surface, panel, config.START_PANEL_ALPHA, config.COLOR_TITLE)
+    pages = (("操作教程", "按住 WASD 转向；鼠标在右侧摇杆框内移动或拖动。"),
+             ("得分规则", "每吃一个绿色食物得 1 分，蛇身增长一节。"),
+             ("失败条件", "蛇碰到墙，或蛇头碰到非相邻身体时失败。"))
+    title, text = pages[max(0, min(page, len(pages) - 1))]
+    graphics.draw_text(surface, title, config.PANEL_TITLE_FONT_SIZE, config.COLOR_TITLE,
+                       center=(panel.center[0], panel.top + 62))
+    graphics.draw_text(surface, text, config.PANEL_TEXT_FONT_SIZE, config.COLOR_TEXT,
+                       center=(panel.center[0], panel.top + 108))
+    illustration = pygame.Rect(panel.left + 90, panel.top + 145, panel.width - 180, 120)
+    pygame.draw.rect(surface, config.COLOR_BOARD, illustration, border_radius=8)
+    pygame.draw.rect(surface, config.COLOR_PANEL_BORDER, illustration, width=2, border_radius=8)
+    if page == 0:
+        pygame.draw.rect(surface, (*config.COLOR_ACCENT, 100),
+                         pygame.Rect(illustration.right - 150, illustration.top + 12, 110, 96), 2)
+        graphics.draw_circle(surface, (illustration.centerx - 20, illustration.centery), 20, config.COLOR_HEAD)
+        graphics.draw_arrow_head(surface, (illustration.centerx + 70, illustration.centery), (1, 0), 18, config.COLOR_ACCENT)
+        graphics.draw_text(surface, "W A S D", config.LABEL_FONT_SIZE, config.COLOR_TEXT,
+                           center=(illustration.centerx - 10, illustration.bottom - 18))
+    elif page == 1:
+        food_half = config.FOOD_SIDE / 2
+        for index, (x, y) in enumerate(((illustration.left + 95, illustration.centery),
+                                        (illustration.centerx, illustration.centery),
+                                        (illustration.right - 95, illustration.centery))):
+            graphics.draw_hollow_square(surface, (x - food_half, y - food_half,
+                                                  config.FOOD_SIDE, config.FOOD_SIDE), config.COLOR_FOOD, 2)
+            graphics.draw_text(surface, f"+{index + 1}", config.LABEL_FONT_SIZE, config.COLOR_TEXT,
+                               center=(x, y + 34))
+    else:
+        pygame.draw.rect(surface, config.COLOR_WALL,
+                         pygame.Rect(illustration.left + 20, illustration.top + 20, 12, illustration.height - 40))
+        graphics.draw_circle(surface, (illustration.centerx, illustration.centery), 26, config.COLOR_HEAD)
+        graphics.draw_arrow_head(surface, (illustration.left + 52, illustration.centery), (-1, 0), 18, config.COLOR_DANGER)
+        graphics.draw_text(surface, "碰墙 / 碰到身体", config.LABEL_FONT_SIZE, config.COLOR_DANGER,
+                           center=(illustration.centerx, illustration.bottom - 18))
+    graphics.draw_text(surface, f"{page + 1} / {len(pages)}", config.LABEL_FONT_SIZE, config.COLOR_DIM_TEXT,
+                       center=(panel.center[0], panel.bottom - 24))
+    if page > 0:
+        graphics.draw_arrow_head(surface, (panel.left + 42, panel.center[1]), (-1, 0), 28, config.COLOR_ACCENT)
+    if page < len(pages) - 1:
+        graphics.draw_arrow_head(surface, (panel.right - 42, panel.center[1]), (1, 0), 28, config.COLOR_ACCENT)
+    graphics.draw_text(surface, "返回", config.PANEL_HINT_FONT_SIZE, config.COLOR_TEXT,
+                       center=(panel.center[0], panel.bottom - 64))
+    return surface
 
 
 def render_pause(state: GameState, layout: Layout) -> pygame.Surface:  # 暂停界面
@@ -186,22 +260,26 @@ def render_over(state: GameState, layout: Layout) -> pygame.Surface:  # 结束�
                        center=(panel.center[0], panel.top + 128), shadow=True)  # 最终得分
     graphics.draw_text(surface, config.OVER_HINT, config.PANEL_HINT_FONT_SIZE, config.COLOR_TEXT,  # 重试提示
                        center=(panel.center[0], panel.bottom - 52), shadow=True)  # 重试与退出提示
-    _draw_footer(surface, layout, "结束：R 重试    Esc 退出")  # 底部操作指引
+    _draw_footer(surface, layout, "结束：R 重试    Esc 回主页面")  # 底部操作指引
     return surface  # 返回画面
 
 
 BUILDERS = {  # 界面名到绘制函数的映射
     "game": render_game,  # 游戏画面
     "start": render_start,  # 开始界面
+    "menu": render_menu,
+    "help": render_help,
     "pause": render_pause,  # 暂停界面
     "over": render_over,  # 结束界面
 }  # 界面映射结束
 
 
-def render(screen: str, state: GameState, layout: Layout, joystick: tuple[float, float] = (0.0, 0.0)) -> pygame.Surface:  # 按名称渲染界面
+def render(screen: str, state: GameState, layout: Layout, joystick: tuple[float, float] = (0.0, 0.0), help_page: int = 0) -> pygame.Surface:  # 按名称渲染界面
     """根据界面名调用对应绘制函数。"""  # 函数说明
     if screen not in BUILDERS:  # 校验界面名
         raise ValueError(f"未知界面：{screen}")  # 抛出错误
     if screen == "game":  # 只有运行中的界面显示方向偏移
         return render_game(state, layout, joystick)  # 绘制当前按住的摇杆方向
+    if screen == "help":
+        return render_help(state, layout, help_page)
     return BUILDERS[screen](state, layout)  # 其他界面使用居中的摇杆

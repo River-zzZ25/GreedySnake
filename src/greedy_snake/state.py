@@ -16,16 +16,37 @@ def _lerp(first: Vector, second: Vector, fraction: float) -> Vector:  # 线性�
             first[1] + (second[1] - first[1]) * fraction)  # 纵向插值
 
 
-@dataclass  # 游戏状态
+@dataclass(init=False)  # 游戏状态
 class GameState:  # 保存可绘制状态和运动历史
     """snake 与 trail 都从头到尾排列；trail 额外保存一节供增长使用。"""  # 类说明
 
     snake: list[Vector]  # 蛇头和各节身体的真实圆心
-    food: Vector | None = None  # 食物方块中心；棋盘没有空位时为 None
+    foods: list[Vector] = field(default_factory=list)  # 当前所有食物中心
     score: int = 0  # 已吃食物数量
     direction: Vector = (1.0, 0.0)  # 当前前进方向，松键后保留
     rng: random.Random = field(default_factory=random.Random, repr=False, compare=False)  # 每局独立随机流
     trail: list[Vector] = field(default_factory=list, repr=False, compare=False)  # 蛇头经过的连续折线
+
+    def __init__(self, snake: list[Vector], foods: list[Vector] | None = None,
+                 score: int = 0, direction: Vector = (1.0, 0.0),
+                 rng: random.Random | None = None, trail: list[Vector] | None = None,
+                 food: Vector | None = None):
+        self.snake = snake
+        self.foods = list(foods or ([] if food is None else [food]))
+        self.score = score
+        self.direction = direction
+        self.rng = rng or random.Random()
+        self.trail = list(trail or [])
+        self.__post_init__()
+
+    @property
+    def food(self) -> Vector | None:
+        """兼容旧调用的首个食物视图。"""
+        return self.foods[0] if self.foods else None
+
+    @food.setter
+    def food(self, value: Vector | None) -> None:
+        self.foods = [] if value is None else [value]
 
     def __post_init__(self) -> None:  # 初始化轨迹
         """从初始身体生成向后的轨迹，并保留增长所需的一节。"""  # 函数说明
@@ -51,7 +72,7 @@ def _food_overlaps_snake(food: Vector, snake: list[Vector]) -> bool:  # 放置�
                for center in snake)  # 逐节检查身体
 
 
-def _random_food(rng: random.Random, layout: Layout, snake: list[Vector]) -> Vector | None:  # 生成食物
+def _random_food(rng: random.Random, layout: Layout, snake: list[Vector], foods: list[Vector] = ()) -> Vector | None:  # 生成食物
     """食物位置不对齐网格，优先随机，必要时扫描空位。"""  # 函数说明
     interior = layout.interior  # 活动区域
     margin = config.FOOD_SIDE / 2 + config.FOOD_MARGIN  # 食物半边长和墙边留白
@@ -61,11 +82,11 @@ def _random_food(rng: random.Random, layout: Layout, snake: list[Vector]) -> Vec
         return None  # 不产生越界食物
     for _ in range(200):  # 先尝试随机位置
         food = (rng.uniform(min_x, max_x), rng.uniform(min_y, max_y))  # 连续随机坐标
-        if not _food_overlaps_snake(food, snake):  # 真实轮廓没有相交
+        if not _food_overlaps_snake(food, snake) and all(math.dist(food, other) > config.FOOD_SIDE * 2 for other in foods):
             return food  # 返回空位
     for y in range(math.ceil(min_y), math.floor(max_y) + 1):  # 随机失败后扫描
         for x in range(math.ceil(min_x), math.floor(max_x) + 1):  # 扫描横向位置
-            if not _food_overlaps_snake((x, y), snake):  # 发现空位
+            if not _food_overlaps_snake((x, y), snake) and all(math.dist((x, y), other) > config.FOOD_SIDE * 2 for other in foods):
                 return (float(x), float(y))  # 返回合法中心
     return None  # 没有空位时不把食物塞进身体里
 
@@ -76,7 +97,11 @@ def create_initial_state(layout: Layout, seed: int | None = None) -> GameState: 
             layout.interior.top + layout.interior.height / 2)  # 中心纵坐标
     state = GameState(snake=[head, (head[0] - config.SNAKE_SPACING, head[1])],  # 初始身体
                       rng=random.Random(seed))  # 独立随机数发生器
-    state.food = _random_food(state.rng, layout, state.snake)  # 放置首个食物
+    for _ in range(config.INITIAL_FOOD_COUNT):
+        food = _random_food(state.rng, layout, state.snake, state.foods)
+        if food is None:
+            break
+        state.foods.append(food)
     return state  # 返回初始状态
 
 
@@ -142,33 +167,39 @@ def _body_contact(old: list[Vector], new: list[Vector]) -> float | None:  # 求�
     return min(contacts) if contacts else None  # 最早接触时间
 
 
-def _food_contact(start: Vector, end: Vector, food: Vector | None) -> float | None:  # 求食物接触时间
-    """圆扫过方块等价于点扫过圆角矩形，分别检查边与四个圆角。"""  # 函数说明
-    if food is None:  # 当前没有食物
-        return None  # 无接触
-    radius, half = config.SNAKE_RADIUS, config.FOOD_SIDE / 2  # 圆半径和方块半边长
-    if _circle_hits_square(start, radius, food, config.FOOD_SIDE):  # 起点已经接触
-        return 0.0  # 立即吃到
-    contacts = []  # 边和角的候选接触时间
-    for axis in (0, 1):  # 分别检查竖边和横边
-        delta = end[axis] - start[axis]  # 本轴位移
-        if abs(delta) <= 1e-12:  # 不穿过该轴的边
-            continue  # 交给另一轴或圆角处理
-        for sign in (-1, 1):  # 两侧平移后的边
-            fraction = (food[axis] + sign * (half + radius) - start[axis]) / delta  # 到达边的时间
-            if 0 <= fraction <= 1:  # 落在本次运动区间
-                other = _lerp(start, end, fraction)[1 - axis]  # 交点的另一坐标
-                if abs(other - food[1 - axis]) <= half:  # 交点在直边范围内
-                    contacts.append(fraction)  # 保存接触时间
-    for sx in (-1, 1):  # 方块两列角点
-        for sy in (-1, 1):  # 方块两行角点
-            corner = (food[0] + sx * half, food[1] + sy * half)  # 真实方块角点
-            first = (start[0] - corner[0], start[1] - corner[1])  # 起点相对角点位置
-            last = (end[0] - corner[0], end[1] - corner[1])  # 终点相对角点位置
-            contact = _sweep_circle(first, last, radius)  # 点与角点圆的交点
-            if contact is not None:  # 本段触及圆角
-                contacts.append(contact)  # 保存候选时间
-    return min(contacts) if contacts else None  # 返回最早接触时间
+def _food_contact(start: Vector, end: Vector, foods: list[Vector]) -> tuple[float, int] | None:
+    """返回扫掠路径最早接触的食物及其索引。"""
+    legacy_single = isinstance(foods, tuple) and len(foods) == 2 and all(isinstance(value, (int, float)) for value in foods)
+    if legacy_single:
+        foods = [foods]
+    result = []
+    radius, half = config.SNAKE_RADIUS, config.FOOD_SIDE / 2
+    for index, food in enumerate(foods):
+        if _circle_hits_square(start, radius, food, config.FOOD_SIDE):
+            result.append((0.0, index))
+            continue
+        contacts = []
+        for axis in (0, 1):
+            delta = end[axis] - start[axis]
+            if abs(delta) <= 1e-12:
+                continue
+            for sign in (-1, 1):
+                fraction = (food[axis] + sign * (half + radius) - start[axis]) / delta
+                if 0 <= fraction <= 1:
+                    other = _lerp(start, end, fraction)[1 - axis]
+                    if abs(other - food[1 - axis]) <= half:
+                        contacts.append(fraction)
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                corner = (food[0] + sx * half, food[1] + sy * half)
+                contact = _sweep_circle((start[0] - corner[0], start[1] - corner[1]),
+                                        (end[0] - corner[0], end[1] - corner[1]), radius)
+                if contact is not None:
+                    contacts.append(contact)
+        if contacts:
+            result.append((min(contacts), index))
+    hit = min(result) if result else None
+    return hit[0] if legacy_single and hit is not None else hit
 
 
 def _advance_step(state: GameState, layout: Layout, dt: float, steering: Vector) -> bool:  # 物理小步
@@ -188,17 +219,23 @@ def _advance_step(state: GameState, layout: Layout, dt: float, steering: Vector)
     wall = _wall_contact(state.snake[0], head, layout)  # 墙体接触时间
     body = _body_contact(state.snake, candidate)  # 非相邻身体接触时间
     collision = min((value for value in (wall, body) if value is not None), default=None)  # 最早失败接触
-    food = _food_contact(state.snake[0], head, state.food)  # 食物接触时间
-    ate = food is not None and (collision is None or food < collision)  # 同时接触时失败优先
-    fraction = min((value for value in (collision, food) if value is not None), default=1.0)  # 本段实际可走比例
+    food_hit = _food_contact(state.snake[0], head, state.foods)
+    food = food_hit[0] if food_hit else None
+    ate = food is not None and (collision is None or food < collision)
+    fraction = min((value for value in (collision, food) if value is not None), default=1.0)
     contact_head = _lerp(state.snake[0], head, fraction)  # 精确停在接触点
     path = [contact_head, *state.trail] if fraction > 1e-12 else state.trail  # 零位移时不引入重复点
     count = len(state.snake) + int(ate)  # 每吃一个食物新增一个身体圆
     state.snake, state.trail = _sample_trail(path, count)  # 保存接触点及完整身体轨迹
     state.direction = (math.cos(angle + turn * fraction), math.sin(angle + turn * fraction))  # 保存实际航向
     if ate:  # 更新吃食物后的状态
-        state.score += 1  # 分数加一
-        state.food = _random_food(state.rng, layout, state.snake)  # 刷新合法食物位置
+        state.score += 1
+        if food_hit:
+            del state.foods[food_hit[1]]
+        if len(state.foods) < config.MAX_FOOD_COUNT:
+            replacement = _random_food(state.rng, layout, state.snake, state.foods)
+            if replacement is not None:
+                state.foods.append(replacement)
         remaining = dt * (1 - fraction)  # 食物接触后还需继续前进的时间
         return _advance_step(state, layout, remaining, steering) if remaining > 1e-10 else False  # 完成本段剩余运动
     return collision is not None  # 碰撞后保持接触位置，供结束画面渲染

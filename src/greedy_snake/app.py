@@ -11,7 +11,7 @@ from .state import advance_state, create_initial_state  # 连续更新与初始�
 
 PREVIEW_KEYS = {  # 数字键预览界面（临时，便于验收）
     pygame.K_1: "game",  # 1：游戏画面
-    pygame.K_2: "start",  # 2：开始界面
+    pygame.K_2: "menu",  # 2：主页面
     pygame.K_3: "pause",  # 3：暂停界面
     pygame.K_4: "over",  # 4：结束界面
 }  # 预览快捷键映射结束
@@ -39,10 +39,14 @@ class Controller:  # 游戏界面与输入控制器
     def __init__(self, layout: Layout, seed: int | None = None):  # 构造控制器
         self.layout = layout  # 布局
         self.state = create_initial_state(layout, seed)  # 初始游戏状态
-        self.screen = "start"  # 默认显示开始界面
-        self.last_press_time: float | None = None  # 上一次按 P 的时间
+        self.screen = "menu"  # 默认显示主页面
+        self.help_page = 0
+        self.last_press_time: float | None = None  # 上一次空格按下时间
         self.last_update_time: float | None = None  # 上一次物理更新的时间
         self.held_keys: set[str] = set()  # 当前仍按住的 WASD
+        self.mouse_joystick_active = False
+        self.mouse_joystick = (0.0, 0.0)
+        self.mouse_joystick_hover = False
         self.quit = False  # 是否退出程序
 
     def reset(self) -> None:  # 重新开始
@@ -52,13 +56,21 @@ class Controller:  # 游戏界面与输入控制器
         self.last_press_time = None  # 重置暂停计时
         self.last_update_time = None  # 从当前时刻重新计时
         self.held_keys.clear()  # 清除上一局残留按键
+        self.mouse_joystick_active = False
+        self.mouse_joystick = (0.0, 0.0)
+        self.mouse_joystick_hover = False
 
     def handle_key(self, key: int, now: float, character: str = "") -> None:  # 处理按键按下
         """按当前界面处理按键，并记录按住的 WASD 施力。"""  # 函数说明
         name = _key_name(key, character)  # 统一按键名称与大小写
         direction = DIRECTION_BY_NAME.get(name)  # 判断是否为方向键
-        if key == pygame.K_ESCAPE or name == "q":  # Esc / Q 退出
-            self.quit = True  # 标记退出
+        if key == pygame.K_ESCAPE or name == "q":
+            if self.screen in {"game", "pause", "over", "help"}:
+                self.screen = "menu"
+                self.last_update_time = None
+                self.held_keys.clear()
+            else:
+                self.quit = True
             return  # 结束处理
         if key in PREVIEW_KEYS:  # 数字键切换预览界面
             self.screen = PREVIEW_KEYS[key]  # 更新界面
@@ -66,6 +78,21 @@ class Controller:  # 游戏界面与输入控制器
             self.last_update_time = None  # 重置物理计时
             self.held_keys.clear()  # 预览切换不保留摇杆输入
             return  # 结束处理
+        if self.screen == "menu":
+            if key == pygame.K_h:
+                self.screen, self.help_page = "help", 0
+            elif key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                self.screen = "game"
+                self.last_update_time = None
+            return
+        if self.screen == "help":
+            if key in (pygame.K_LEFT, pygame.K_a):
+                self.help_page = max(0, self.help_page - 1)
+            elif key in (pygame.K_RIGHT, pygame.K_d):
+                self.help_page = min(2, self.help_page + 1)
+            elif key in (pygame.K_RETURN, pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                self.screen = "menu"
+            return
         if self.screen == "start":  # 开始界面按任意键开始
             if direction is not None:  # 若开始键本身是 WASD
                 self.held_keys.add(name)  # 从开始这一帧起显示摇杆偏移
@@ -75,21 +102,24 @@ class Controller:  # 游戏界面与输入控制器
         elif self.screen == "game":  # 游戏画面处理方向与暂停
             if direction is not None:  # 按下 W/A/S/D
                 self.held_keys.add(name)  # 持续施力直到收到 KEYUP
-            elif name == "p":  # 按下 P
-                if (self.last_press_time is not None  # 已经按过一次 P
+            elif key == pygame.K_SPACE:
+                if (self.last_press_time is not None  # 已经按过一次空格
                         and now - self.last_press_time <= config.PAUSE_DOUBLE_WINDOW):  # 距上次足够近
                     self.screen = "pause"  # 连按两次才暂停
                     self.last_press_time = None  # 重置暂停计时
                     self.last_update_time = None  # 暂停期间不积累时间
-                else:  # 第一次按 P
+                else:  # 第一次按空格
                     self.last_press_time = now  # 记录本次时间
         elif self.screen == "pause":  # 暂停界面按键
             if direction is not None:  # 记录暂停期间新按住的方向键
                 self.held_keys.add(name)  # 恢复时仍按住才施力，KEYUP 会正常清除
-            elif name == "p":  # 按一次 P 继续
-                self.screen = "game"  # 回到游戏画面
-                self.last_press_time = None  # 重置暂停计时
-                self.last_update_time = None  # 恢复后重新计时
+            elif key == pygame.K_SPACE:
+                if self.last_press_time is not None and now - self.last_press_time <= config.PAUSE_DOUBLE_WINDOW:
+                    self.screen = "game"
+                    self.last_press_time = None
+                    self.last_update_time = None
+                else:
+                    self.last_press_time = now
             elif name == "r":  # 按 R 重试
                 self.reset()  # 重开一局
         elif self.screen == "over":  # 结束界面按键
@@ -106,6 +136,8 @@ class Controller:  # 游戏界面与输入控制器
         """合成当前按住的 WASD，返回归一化后的摇杆偏移方向。"""  # 函数说明
         if self.screen != "game":  # 暂停或结束时摇杆居中
             return (0.0, 0.0)  # 非游戏界面不施力
+        if self.mouse_joystick_active or self.mouse_joystick_hover:
+            return self.mouse_joystick
         x = sum(DIRECTION_BY_NAME[name][0] for name in self.held_keys)  # 合成横向输入
         y = sum(DIRECTION_BY_NAME[name][1] for name in self.held_keys)  # 合成纵向输入
         length = math.hypot(x, y)  # 计算合成向量长度
@@ -116,6 +148,9 @@ class Controller:  # 游戏界面与输入控制器
     def lose_focus(self) -> None:  # 窗口失去焦点
         """清除可能在其他窗口释放的按键，防止回来后持续转弯。"""  # 函数说明
         self.held_keys.clear()  # 清除方向输入
+        self.mouse_joystick_active = False
+        self.mouse_joystick = (0.0, 0.0)
+        self.mouse_joystick_hover = False
         self.last_update_time = None  # 恢复时不积累离开期间的时间
         self.last_press_time = None  # 丢弃旧暂停按键时间
 
@@ -137,22 +172,60 @@ class Controller:  # 游戏界面与输入控制器
     def handle_click(self, position: tuple[int, int], now: float) -> None:  # 处理鼠标单击
         """根据当前界面与点击位置执行暂停、继续、重试或退出。"""  # 函数说明
         del now  # 单击逻辑不需要时间参数
-        self.last_press_time = None  # 鼠标操作后重新计算双按 P 的时间窗口
+        self.last_press_time = None  # 鼠标操作后重新计算双击窗口
         self.last_update_time = None  # 切换界面后重新计时
-        if self.screen == "start":  # 开始界面单击开始
-            self.screen = "game"  # 进入游戏画面
+        if self.screen == "start":
+            self.reset()
+        elif self.screen == "menu":
+            panel = self.layout.start_panel_rect()
+            for index, _label in enumerate(config.MENU_BUTTONS):
+                rect = pygame.Rect(panel.left + 120, panel.top + 140 + index * 58 - 22,
+                                   panel.width - 240, 44)
+                if rect.collidepoint(position):
+                    if index == 0:
+                        self.reset()
+                    elif index == 1:
+                        self.screen, self.help_page = "help", 0
+                    else:
+                        self.quit = True
+                    return
+        elif self.screen == "help":
+            panel = self.layout.centered_rect(820, 470)
+            if position[1] >= panel.bottom - 115:
+                self.screen = "menu"
+            elif position[0] < panel.left + 90 and self.help_page > 0:
+                self.help_page -= 1
+            elif position[0] > panel.right - 90 and self.help_page < 2:
+                self.help_page += 1
         elif self.screen == "game":  # 游戏画面单击暂停
             self.screen = "pause"  # 进入暂停界面
         elif self.screen == "pause":  # 暂停界面按图标区域判断
             exit_rect, _play_rect, restart_rect = self.layout.pause_icon_rects()  # 三个图标判定区域
             if exit_rect.contains(position):  # 点中左侧退出图标
-                self.quit = True  # 退出程序
+                self.screen = "menu"
             elif restart_rect.contains(position):  # 点中右侧重试图标
                 self.reset()  # 重开一局
             else:  # 点中其他位置（含中间继续图标）
                 self.screen = "game"  # 继续游戏
         elif self.screen == "over":  # 结束界面单击重试
             self.reset()  # 重开一局
+
+    def handle_mouse_motion(self, position: tuple[int, int]) -> None:
+        x, y, width, height = config.JOYSTICK_BOX
+        inside = x <= position[0] <= x + width and y <= position[1] <= y + height
+        if not inside:
+            self.mouse_joystick_hover = False
+            if not self.mouse_joystick_active:
+                self.mouse_joystick = (0.0, 0.0)
+            return
+        self.mouse_joystick_hover = True
+        cx, cy = x + width / 2, y + height / 2
+        dx, dy = position[0] - cx, position[1] - cy
+        radius = min(width, height) / 2
+        length = math.hypot(dx, dy)
+        if length > radius:
+            dx, dy = dx * radius / length, dy * radius / length
+        self.mouse_joystick = (dx / radius, dy / radius)
 
 
 def run(seed: int | None = None) -> None:  # 运行图形窗口
@@ -175,12 +248,27 @@ def run(seed: int | None = None) -> None:  # 运行图形窗口
                 elif event.type == pygame.WINDOWFOCUSLOST:  # 切换到其他窗口
                     controller.lose_focus()  # 清除可能无法收到释放事件的方向键
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # 鼠标左键
-                    controller.handle_click(event.pos, time.monotonic())  # 交给控制器
+                    joystick_rect = pygame.Rect(*config.JOYSTICK_BOX)
+                    if controller.screen == "game" and joystick_rect.collidepoint(event.pos):
+                        controller.mouse_joystick_active = True
+                        controller.handle_mouse_motion(event.pos)
+                    else:
+                        controller.handle_click(event.pos, time.monotonic())
+                elif event.type == pygame.MOUSEMOTION:
+                    controller.handle_mouse_motion(event.pos)
+                elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    controller.mouse_joystick_active = False
+                    controller.mouse_joystick = (0.0, 0.0)
+                    controller.mouse_joystick_hover = False
             if controller.quit:  # 需要退出
                 break  # 跳出循环
             now = time.monotonic()  # 为一帧使用同一个时间戳
             controller.update(now)  # 按真实时间连续移动蛇
-            frame = screens.render(controller.screen, controller.state, layout, controller.joystick_input())  # 绘制蛇与摇杆
+            joystick = controller.joystick_input()
+            if controller.screen == "help":
+                frame = screens.render(controller.screen, controller.state, layout, joystick, controller.help_page)
+            else:
+                frame = screens.render(controller.screen, controller.state, layout, joystick)
             window.blit(frame, (0, 0))  # 绘制到窗口
             pygame.display.flip()  # 刷新显示
             clock.tick(config.FPS)  # 控制高刷新率

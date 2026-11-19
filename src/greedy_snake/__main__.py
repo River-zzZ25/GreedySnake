@@ -11,7 +11,7 @@ from .app import run  # 图形窗口主循环
 from .layout import Layout  # 布局
 from .state import create_initial_state  # 初始状态
 
-SCREENSHOT_SCREENS = ("game", "start", "pause", "over")  # 需要生成截图的界面
+SCREENSHOT_SCREENS = ("menu", "help", "game", "start", "pause", "over")
 
 
 def build_parser() -> argparse.ArgumentParser:  # 构造参数解析器
@@ -24,13 +24,13 @@ def build_parser() -> argparse.ArgumentParser:  # 构造参数解析器
 
 
 def render_screenshots(out_dir: pathlib.Path, seed: int | None) -> int:  # 渲染界面截图
-    """把四个界面渲染成 PNG 文件，返回退出码。"""  # 函数说明
+    """把所有主要界面渲染成 PNG 文件，返回退出码。"""  # 函数说明
     layout = Layout.default()  # 默认布局
     state = create_initial_state(layout, seed)  # 初始状态
     out_dir.mkdir(parents=True, exist_ok=True)  # 创建输出目录
     for name in SCREENSHOT_SCREENS:  # 逐个界面渲染
         state.score = 12 if name in ("pause", "over") else 0  # 暂停/结束界面演示较高分数
-        frame = screens.render(name, state, layout)  # 渲染界面
+        frame = screens.render(name, state, layout, help_page=1 if name == "help" else 0)  # 渲染界面
         path = out_dir / f"{name}.png"  # 输出文件路径
         pygame.image.save(frame, str(path))  # 保存 PNG
         print(f"generated: {path}", flush=True)  # 打印生成进度
