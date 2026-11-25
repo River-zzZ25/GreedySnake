@@ -34,14 +34,15 @@ def run_screenshots(out_dir: pathlib.Path) -> subprocess.CompletedProcess:  # �
 
 
 class ScreenshotTests(unittest.TestCase):  # 截图命令测试
-    """验证四个界面截图能够生成且尺寸正确。"""  # 类说明
+    """验证所有主要界面与教程截图能够生成且尺寸正确。"""  # 类说明
 
-    def test_generate_four_screenshots(self):  # 生成四张截图
+    def test_generate_all_screenshots(self):  # 生成主要截图
         with tempfile.TemporaryDirectory() as temp_dir:  # 临时输出目录
             out_dir = pathlib.Path(temp_dir)  # 转成路径
             result = run_screenshots(out_dir)  # 执行截图命令
             self.assertEqual(result.returncode, 0, result.stderr)  # 退出码为 0
-            for name in ("game", "start", "pause", "over"):  # 四个界面
+            for name in ("menu", "menu-settings", "help-1", "help-2", "help-3", "help-4",
+                         "game", "game-joystick", "start", "pause", "over"):  # 全部主要界面
                 path = out_dir / f"{name}.png"  # 截图文件
                 self.assertTrue(path.exists())  # 文件存在
                 self.assertEqual(path.read_bytes()[:8], PNG_SIGNATURE)  # PNG 文件头正确

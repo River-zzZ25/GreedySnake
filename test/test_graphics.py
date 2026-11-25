@@ -99,3 +99,12 @@ class ContinuousRenderingTests(unittest.TestCase):  # 连续位置与摇杆显�
             graphics.draw_joystick(surface, (100, 100), 46, 18, vector, 22, config.COLOR_ACCENT, config.JOYSTICK_ALPHA)  # 绘制对应摇杆
         self.assertNotEqual(pixel(held, 100, 78), pixel(idle, 100, 78))  # 摇杆中心向上偏移
         self.assertEqual(pygame.image.tobytes(idle, "RGBA"), pygame.image.tobytes(released, "RGBA"))  # 释放后精确回中
+
+    def test_energy_meter_changes_with_fractional_value(self):
+        first = pygame.Surface((80, 320), pygame.SRCALPHA)
+        second = pygame.Surface((80, 320), pygame.SRCALPHA)
+        rect = pygame.Rect(20, 20, 22, 260)
+        graphics.draw_energy_meter(first, rect, 0.500)
+        graphics.draw_energy_meter(second, rect, 0.505)
+        self.assertNotEqual(pygame.image.tobytes(first, "RGBA"),
+                            pygame.image.tobytes(second, "RGBA"))

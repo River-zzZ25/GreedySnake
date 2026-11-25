@@ -76,6 +76,19 @@ class GameScreenTests(unittest.TestCase):  # 游戏画面测试
         self.assertGreater(count_color(self.surface, config.COLOR_TEXT, region), 20)  # 存在白色文字
 
 
+    def test_energy_meter_is_visible(self):
+        region = pygame.Rect(*config.ENERGY_BAR_RECT).inflate(30, 50)
+        self.assertGreater(count_color(self.surface, config.COLOR_ENERGY, region), 100)
+
+    def test_virtual_joystick_is_visible_only_in_joystick_mode(self):
+        center = config.JOYSTICK_CENTER
+        region = pygame.Rect(center[0] - 90, center[1] - 90, 180, 180)
+        keyboard = screens.render_game(STATE, LAYOUT, input_mode="wasd")
+        joystick = screens.render_game(STATE, LAYOUT, input_mode="joystick")
+        self.assertNotEqual(pygame.image.tobytes(joystick.subsurface(region), "RGBA"),
+                            pygame.image.tobytes(keyboard.subsurface(region), "RGBA"))
+
+
 class StartScreenTests(unittest.TestCase):  # 开始界面测试
     """验证开始界面隐藏食物且显示规则面板。"""  # 类说明
 
@@ -94,6 +107,35 @@ class StartScreenTests(unittest.TestCase):  # 开始界面测试
         panel = LAYOUT.start_panel_rect()  # 开始面板矩形
         region = pygame.Rect(panel.left, panel.bottom - 80, panel.width, 60)  # 提示文字区域
         self.assertGreater(count_color(self.surface, config.COLOR_ACCENT, region, 80), 10)  # 青色提示文字
+
+
+class MenuScreenTests(unittest.TestCase):
+    """主页面设置入口与控制模式弹层。"""
+
+    def test_settings_icon_is_in_top_right(self):
+        surface = screens.render_menu(STATE, LAYOUT)
+        rect = LAYOUT.settings_icon_rect()
+        region = pygame.Rect(rect.left, rect.top, rect.width, rect.height)
+        self.assertGreater(count_color(surface, config.COLOR_TITLE, region), 30)
+
+    def test_settings_panel_shows_both_modes(self):
+        surface = screens.render_menu(STATE, LAYOUT, input_mode="joystick",
+                                      settings_open=True)
+        for rect in LAYOUT.settings_mode_rects():
+            region = pygame.Rect(rect.left, rect.top, rect.width, rect.height)
+            self.assertGreater(count_color(surface, config.COLOR_TEXT, region), 10)
+
+
+class HelpScreenTests(unittest.TestCase):
+    """教程页包含单食物计分与新增能量说明。"""
+
+    def test_scoring_page_uses_one_food_example(self):
+        surface = screens.render_help(STATE, LAYOUT, page=2)
+        self.assertLess(count_color(surface, config.COLOR_FOOD), 100)
+
+    def test_last_help_page_explains_safe_body_contact(self):
+        surface = screens.render_help(STATE, LAYOUT, page=3)
+        self.assertGreater(count_color(surface, config.COLOR_ACCENT), 10)
 
 
 class PauseScreenTests(unittest.TestCase):  # 暂停界面测试

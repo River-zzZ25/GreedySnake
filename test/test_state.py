@@ -162,6 +162,61 @@ class ContinuousStateTests(unittest.TestCase):  # 连续玩法测试
                                          (700 - config.SNAKE_DIAMETER + 0.5, 400), *centers[3:]])
         self.assertIsNotNone(contact)
 
+    def test_head_can_overlap_own_body_without_failing(self):
+        state = GameState(snake=[(600, 364), (574, 364), (600.2, 364)])
+        self.assertFalse(advance_state(state, self.layout, 1 / 120))
+
+    def test_snake_growth_stops_at_50_but_food_still_scores(self):
+        centers = [(600 - index * config.SNAKE_SPACING, 364) for index in range(config.MAX_SNAKE_LENGTH)]
+        state = GameState(snake=centers, food=centers[0], energy=0.4)
+        self.assertFalse(advance_state(state, self.layout, 1 / 240))
+        self.assertEqual(len(state.snake), config.MAX_SNAKE_LENGTH)
+        self.assertEqual(state.score, 1)
+        self.assertAlmostEqual(state.energy,
+                               0.4 + config.ENERGY_FOOD_GAIN + config.ENERGY_RECOVERY_PER_SECOND / 240)
+
+    def test_energy_recovery_and_boost_drain_are_combined(self):
+        passive = create_initial_state(self.layout, seed=1)
+        passive.food = (1100, 600)
+        passive.energy = 0.5
+        advance_state(passive, self.layout, 1.0)
+        self.assertAlmostEqual(passive.energy, 0.5 + config.ENERGY_RECOVERY_PER_SECOND)
+
+        boosted = create_initial_state(self.layout, seed=1)
+        boosted.food = (1100, 600)
+        boosted.energy = 0.5
+        advance_state(boosted, self.layout, 1.0, boost=True)
+        expected = 0.5 + config.ENERGY_RECOVERY_PER_SECOND - config.ENERGY_BOOST_DRAIN_PER_SECOND
+        self.assertAlmostEqual(boosted.energy, expected)
+
+    def test_boost_moves_faster_while_energy_is_available(self):
+        self.state.energy = 0.5
+        head = self.state.snake[0]
+        advance_state(self.state, self.layout, 1 / 120, boost=True)
+        self.assertAlmostEqual(math.dist(head, self.state.snake[0]),
+                               config.SNAKE_SPEED * config.BOOST_SPEED_MULTIPLIER / 120)
+
+    def test_energy_integration_is_stable_across_frame_rates(self):
+        values = []
+        for fps in (30, 60, 120):
+            state = create_initial_state(self.layout, seed=1)
+            state.food = (1100, 600)
+            state.energy = 0.5
+            for _ in range(fps):
+                advance_state(state, self.layout, 1 / fps, boost=True)
+            values.append(state.energy)
+        for value in values[1:]:
+            self.assertAlmostEqual(value, values[0], places=12)
+
+    def test_empty_energy_stops_boost_and_recovers_after_release(self):
+        self.state.energy = 0.01
+        advance_state(self.state, self.layout, 0.3)
+        self.assertAlmostEqual(self.state.energy, 0.01 + config.ENERGY_RECOVERY_PER_SECOND * 0.3)
+        advance_state(self.state, self.layout, 0.5, boost=True)
+        self.assertAlmostEqual(self.state.energy, 0.0)
+        advance_state(self.state, self.layout, 1.0)
+        self.assertAlmostEqual(self.state.energy, config.ENERGY_RECOVERY_PER_SECOND)
+
 
 class SweptGeometryTests(unittest.TestCase):  # 几何边界回归
     """覆盖方块角部、圆周相切和跨过物体的运动。"""  # 类说明

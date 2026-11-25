@@ -23,21 +23,30 @@ class GameState:  # 保存可绘制状态和运动历史
     snake: list[Vector]  # 蛇头和各节身体的真实圆心
     foods: list[Vector] = field(default_factory=list)  # 当前所有食物中心
     score: int = 0  # 已吃食物数量
+    energy: float = config.ENERGY_INITIAL  # 归一化能量，范围 0~1
     direction: Vector = (1.0, 0.0)  # 当前前进方向，松键后保留
     rng: random.Random = field(default_factory=random.Random, repr=False, compare=False)  # 每局独立随机流
     trail: list[Vector] = field(default_factory=list, repr=False, compare=False)  # 蛇头经过的连续折线
 
     def __init__(self, snake: list[Vector], foods: list[Vector] | None = None,
-                 score: int = 0, direction: Vector = (1.0, 0.0),
+                 score: int = 0, energy: float = config.ENERGY_INITIAL,
+                 direction: Vector = (1.0, 0.0),
                  rng: random.Random | None = None, trail: list[Vector] | None = None,
                  food: Vector | None = None):
         self.snake = snake
         self.foods = list(foods or ([] if food is None else [food]))
         self.score = score
+        self.energy = max(0.0, min(config.ENERGY_MAX, energy))
         self.direction = direction
         self.rng = rng or random.Random()
         self.trail = list(trail or [])
         self.__post_init__()
+
+    def update_energy(self, dt: float, boost_requested: bool = False) -> None:
+        """独立计算自然恢复与加速消耗，再合并到最终能量。"""
+        recovery = config.ENERGY_RECOVERY_PER_SECOND * dt
+        drain = config.ENERGY_BOOST_DRAIN_PER_SECOND * dt if boost_requested else 0.0
+        self.energy = max(0.0, min(config.ENERGY_MAX, self.energy + recovery - drain))
 
     @property
     def food(self) -> Vector | None:
@@ -202,7 +211,8 @@ def _food_contact(start: Vector, end: Vector, foods: list[Vector]) -> tuple[floa
     return hit[0] if legacy_single and hit is not None else hit
 
 
-def _advance_step(state: GameState, layout: Layout, dt: float, steering: Vector) -> bool:  # 物理小步
+def _advance_step(state: GameState, layout: Layout, dt: float, steering: Vector,
+                  boosting: bool = False) -> bool:  # 物理小步
     """求一次微小转弯及该段内的最早接触位置。"""  # 函数说明
     angle = math.atan2(state.direction[1], state.direction[0])  # 当前航向
     turn = 0.0  # 松开方向键时不再转弯
@@ -211,25 +221,27 @@ def _advance_step(state: GameState, layout: Layout, dt: float, steering: Vector)
         difference = (target - angle + math.pi) % math.tau - math.pi  # 沿最短方向转弯，反向键也能掉头
         turn = max(-config.TURN_RATE, min(config.TURN_RATE, difference * config.TURN_RESPONSE)) * dt  # 限制转速
     midpoint = angle + turn / 2  # 采用区间中点航向积分位移
-    travel = config.SNAKE_SPEED * dt  # 恒定前进速度
+    speed = config.SNAKE_SPEED * (config.BOOST_SPEED_MULTIPLIER if boosting else 1.0)
+    travel = speed * dt  # 普通或加速前进
     head = (state.snake[0][0] + math.cos(midpoint) * travel,  # 候选蛇头横坐标
             state.snake[0][1] + math.sin(midpoint) * travel)  # 候选蛇头纵坐标
     path = [head, *state.trail]  # 新蛇头加入真实路径
-    candidate, _ = _sample_trail(path, len(state.snake))  # 身体沿原路径前进
+    candidate, _ = _sample_trail(path, len(state.snake))  # 预测本步身体位置
     wall = _wall_contact(state.snake[0], head, layout)  # 墙体接触时间
-    body = _body_contact(state.snake, candidate)  # 非相邻身体接触时间
-    collision = min((value for value in (wall, body) if value is not None), default=None)  # 最早失败接触
+    collision = wall  # 只有墙体导致失败，碰到自身身体不失败
     food_hit = _food_contact(state.snake[0], head, state.foods)
     food = food_hit[0] if food_hit else None
     ate = food is not None and (collision is None or food < collision)
     fraction = min((value for value in (collision, food) if value is not None), default=1.0)
     contact_head = _lerp(state.snake[0], head, fraction)  # 精确停在接触点
     path = [contact_head, *state.trail] if fraction > 1e-12 else state.trail  # 零位移时不引入重复点
-    count = len(state.snake) + int(ate)  # 每吃一个食物新增一个身体圆
+    grow = int(ate and len(state.snake) < config.MAX_SNAKE_LENGTH)
+    count = len(state.snake) + grow  # 未达到上限时每吃一个食物增长一节
     state.snake, state.trail = _sample_trail(path, count)  # 保存接触点及完整身体轨迹
     state.direction = (math.cos(angle + turn * fraction), math.sin(angle + turn * fraction))  # 保存实际航向
     if ate:  # 更新吃食物后的状态
         state.score += 1
+        state.energy = min(config.ENERGY_MAX, state.energy + config.ENERGY_FOOD_GAIN)
         if food_hit:
             del state.foods[food_hit[1]]
         if len(state.foods) < config.MAX_FOOD_COUNT:
@@ -237,16 +249,21 @@ def _advance_step(state: GameState, layout: Layout, dt: float, steering: Vector)
             if replacement is not None:
                 state.foods.append(replacement)
         remaining = dt * (1 - fraction)  # 食物接触后还需继续前进的时间
-        return _advance_step(state, layout, remaining, steering) if remaining > 1e-10 else False  # 完成本段剩余运动
+        return (_advance_step(state, layout, remaining, steering, boosting)
+                if remaining > 1e-10 else False)  # 完成本段剩余运动
     return collision is not None  # 碰撞后保持接触位置，供结束画面渲染
 
 
-def advance_state(state: GameState, layout: Layout, dt: float, steering: Vector = (0.0, 0.0)) -> bool:  # 连续推进
+def advance_state(state: GameState, layout: Layout, dt: float,
+                  steering: Vector = (0.0, 0.0), boost: bool = False) -> bool:  # 连续推进
     """把帧时长分成物理小步，直线、曲线、吃食物均采用实际几何轮廓。"""  # 函数说明
     if dt <= 0:  # 没有时间流逝
         return False  # 保持状态
     count = max(1, math.ceil(dt / config.PHYSICS_DT - 1e-10))  # 保证单步最大位移约半像素
     for _ in range(count):  # 稳定积分，不受屏幕帧率影响
-        if _advance_step(state, layout, dt / count, steering):  # 连续推进并检测本段接触
+        step = dt / count
+        boosting = boost and state.energy > 1e-9
+        state.update_energy(step, boost)  # 自然恢复与加速消耗独立合并
+        if _advance_step(state, layout, step, steering, boosting):  # 连续推进并检测墙体
             return True  # 碰撞立即停止剩余时间
     return False  # 本帧安全

@@ -118,6 +118,30 @@ class MouseFlowTests(ControllerTestBase):  # 鼠标流程测试
         self.click((600, 360))  # 单击重试
         self.assertEqual(self.controller.screen, "game")  # 回到游戏画面
 
+    def test_settings_icon_switches_between_wasd_and_joystick(self):
+        self.controller.screen = "menu"
+        self.click(self.layout.settings_icon_rect().center)
+        self.assertTrue(self.controller.settings_open)
+        wasd_rect, joystick_rect = self.layout.settings_mode_rects()
+        self.click(joystick_rect.center)
+        self.assertEqual(self.controller.input_mode, "joystick")
+        self.click(wasd_rect.center)
+        self.assertEqual(self.controller.input_mode, "wasd")
+
+    def test_joystick_mode_uses_mouse_anywhere_without_holding(self):
+        self.controller.input_mode = "joystick"
+        self.controller.handle_mouse_motion((1, config.JOYSTICK_CENTER[1]))
+        self.assertEqual(self.controller.joystick_input(), (-1, 0))
+        self.controller.handle_mouse_motion((600, 1))
+        x, y = self.controller.joystick_input()
+        self.assertLess(x, 0)
+        self.assertLess(y, 0)
+
+    def test_wasd_mode_ignores_mouse_position(self):
+        self.controller.input_mode = "wasd"
+        self.controller.handle_mouse_motion((1, 360))
+        self.assertEqual(self.controller.joystick_input(), (0, 0))
+
 
 class MovementControlTests(ControllerTestBase):  # 连续运动控制测试
     """按键保持、松开、暂停和每帧运动的完整行为。"""  # 类说明
@@ -249,6 +273,22 @@ class MovementControlTests(ControllerTestBase):  # 连续运动控制测试
         self.controller.update(20)  # 恢复时重新计时
         self.assertEqual(self.controller.state.snake, before)  # 不补算失去焦点期间
 
+    def test_shift_boost_moves_faster_and_consumes_energy_continuously(self):
+        self.controller.state.energy = 0.5
+        head = self.controller.state.snake[0]
+        self.press(pygame.K_LSHIFT)
+        self.controller.update(0)
+        self.controller.update(1 / 120)
+        self.assertAlmostEqual(math.dist(head, self.controller.state.snake[0]),
+                               config.SNAKE_SPEED * config.BOOST_SPEED_MULTIPLIER / 120)
+        self.assertAlmostEqual(
+            self.controller.state.energy,
+            0.5 + config.ENERGY_RECOVERY_PER_SECOND / 120
+            - config.ENERGY_BOOST_DRAIN_PER_SECOND / 120,
+        )
+        self.controller.handle_key_up(pygame.K_LSHIFT)
+        self.assertFalse(self.controller.boost_requested)
+
     def test_wall_contact_ends_game_and_freezes_contact_frame(self):  # 停在墙边而非提前一格
         self.press(pygame.K_SPACE)  # 开始
         self.controller.update(0)  # 初始化时间
@@ -302,7 +342,7 @@ class MainLoopTests(unittest.TestCase):  # 实际 pygame 事件循环集成
                 pygame.event.post(pygame.event.Event(pygame.QUIT))  # 正常退出窗口
             return original_get()  # 真实队列取出事件
 
-        def capture(screen, state, layout, joystick):  # 记录真实渲染过程
+        def capture(screen, state, layout, joystick, **kwargs):  # 记录真实渲染过程
             frames.append((screen, state.snake.copy(), state.direction, state.score, joystick))  # 保存观察结果
             return original_render(screen, state, layout, joystick)  # 使用实际绘图
 

@@ -11,14 +11,15 @@ from .app import run  # 图形窗口主循环
 from .layout import Layout  # 布局
 from .state import create_initial_state  # 初始状态
 
-SCREENSHOT_SCREENS = ("menu", "help", "game", "start", "pause", "over")
+SCREENSHOT_SCREENS = ("menu", "menu-settings", "help-1", "help-2", "help-3", "help-4",
+                      "game", "game-joystick", "start", "pause", "over")
 
 
 def build_parser() -> argparse.ArgumentParser:  # 构造参数解析器
     """创建并返回命令行参数解析器。"""  # 函数说明
-    parser = argparse.ArgumentParser(prog="greedy-snake", description="贪吃蛇（实现步骤 2：移动、成长、计分与碰撞）")  # 程序名与说明
+    parser = argparse.ArgumentParser(prog="greedy-snake", description="贪吃蛇图形游戏")  # 程序名与说明
     parser.add_argument("--screenshots", type=pathlib.Path, default=None,  # 截图模式参数
-                        help="渲染四张界面截图到指定目录后退出（无需打开窗口）")  # 截图模式参数
+                        help="渲染主要界面与教程页截图到指定目录后退出")  # 截图模式参数
     parser.add_argument("--seed", type=int, default=None, help="食物随机种子，便于复现画面")  # 随机种子
     return parser  # 返回解析器
 
@@ -30,7 +31,16 @@ def render_screenshots(out_dir: pathlib.Path, seed: int | None) -> int:  # 渲�
     out_dir.mkdir(parents=True, exist_ok=True)  # 创建输出目录
     for name in SCREENSHOT_SCREENS:  # 逐个界面渲染
         state.score = 12 if name in ("pause", "over") else 0  # 暂停/结束界面演示较高分数
-        frame = screens.render(name, state, layout, help_page=1 if name == "help" else 0)  # 渲染界面
+        state.energy = 0.36 if name in ("game", "game-joystick", "pause", "over") else 1.0
+        if name == "menu-settings":
+            frame = screens.render_menu(state, layout, input_mode="joystick", settings_open=True)
+        elif name.startswith("help-"):
+            frame = screens.render_help(state, layout, int(name.rsplit("-", 1)[1]) - 1)
+        elif name == "game-joystick":
+            frame = screens.render_game(state, layout, joystick=(0.75, -0.66),
+                                        input_mode="joystick", boosting=True)
+        else:
+            frame = screens.render(name, state, layout)
         path = out_dir / f"{name}.png"  # 输出文件路径
         pygame.image.save(frame, str(path))  # 保存 PNG
         print(f"generated: {path}", flush=True)  # 打印生成进度

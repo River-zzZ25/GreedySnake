@@ -1,4 +1,4 @@
-"""四类界面渲染：连续蛇运动、虚拟摇杆、开始、暂停和结束。"""  # 模块说明
+"""界面渲染：连续蛇运动、能量、虚拟摇杆、菜单、教程与暂停。"""  # 模块说明
 
 import math  # 计算重试图标的箭头方向
 
@@ -45,23 +45,34 @@ def _draw_food(surface: pygame.Surface, state: GameState) -> None:  # 绘制食�
         graphics.draw_hollow_square(surface, rect, config.COLOR_FOOD, config.FOOD_OUTLINE)
 
 
-def _draw_joystick_box(surface: pygame.Surface, joystick: tuple[float, float]) -> None:
-    """绘制右侧 220 像素鼠标摇杆区域。"""
-    x, y, width, height = config.JOYSTICK_BOX
-    layer = pygame.Surface((width, height), pygame.SRCALPHA)
-    pygame.draw.rect(layer, (*config.COLOR_PANEL, config.JOYSTICK_ALPHA), layer.get_rect(), 2)
-    surface.blit(layer, (x, y))
+def _draw_virtual_joystick(surface: pygame.Surface, joystick: tuple[float, float]) -> None:
+    """绘制右下角半透明虚拟摇杆。"""
     graphics.draw_joystick(surface, config.JOYSTICK_CENTER, config.JOYSTICK_BASE_RADIUS,
                             config.JOYSTICK_KNOB_RADIUS, joystick, config.JOYSTICK_MAX_OFFSET,
                             config.COLOR_ACCENT, config.JOYSTICK_ALPHA)
+    graphics.draw_text(surface, "鼠标摇杆", config.LABEL_FONT_SIZE, config.COLOR_DIM_TEXT,
+                       center=(config.JOYSTICK_CENTER[0],
+                               config.JOYSTICK_CENTER[1] + config.JOYSTICK_BASE_RADIUS + 18))
 
 
-def _draw_header(surface: pygame.Surface, layout: Layout, state: GameState) -> None:  # 绘制顶部信息
+def _draw_header(surface: pygame.Surface, layout: Layout, state: GameState,
+                 show_score: bool = True) -> None:  # 绘制顶部信息
     """绘制顶部青色标题与右上角白色分数（不再显示左上角暂停图标）。"""  # 函数说明
     graphics.draw_text(surface, config.TITLE_TEXT, config.TITLE_FONT_SIZE, config.COLOR_TITLE,  # 标题居中
                        center=(layout.window[0] // 2, layout.header.height // 2))  # 标题居中
-    graphics.draw_text(surface, f"得分：{state.score}", config.SCORE_FONT_SIZE, config.COLOR_TEXT,  # 分数右上角
-                       topright=(layout.window[0] - config.MARGIN, 16))  # 右上角白色分数
+    if show_score:
+        graphics.draw_text(surface, f"得分：{state.score}", config.SCORE_FONT_SIZE, config.COLOR_TEXT,
+                           topright=(layout.window[0] - config.MARGIN, 16))
+
+
+def _draw_energy(surface: pygame.Surface, state: GameState, boosting: bool) -> None:
+    """绘制右侧连续能量条与百分比。"""
+    rect = pygame.Rect(*config.ENERGY_BAR_RECT)
+    graphics.draw_energy_meter(surface, rect, state.energy, boosting and state.energy > 1e-9)
+    graphics.draw_text(surface, "能量", config.LABEL_FONT_SIZE, config.COLOR_TEXT,
+                       center=(rect.centerx, rect.top - 18))
+    graphics.draw_text(surface, f"{round(state.energy * 100)}%", 16, config.COLOR_DIM_TEXT,
+                       center=(rect.centerx, rect.bottom + 18))
 
 
 def _draw_footer(surface: pygame.Surface, layout: Layout, text: str) -> None:  # 绘制底部指引
@@ -124,8 +135,10 @@ def _draw_restart_icon(surface: pygame.Surface, center: tuple[int, int],  # 图�
     graphics.draw_arrow_head(surface, tip, direction, 16, color)  # 指向左侧缺口的箭头
 
 
-def _base_scene(layout: Layout, state: GameState, show_food: bool,  # 组装公共场景
-                joystick: tuple[float, float] = (0.0, 0.0)) -> pygame.Surface:  # 可选摇杆输入
+def _base_scene(layout: Layout, state: GameState, show_food: bool,
+                joystick: tuple[float, float] = (0.0, 0.0),
+                input_mode: str = "wasd", boosting: bool = False,
+                show_score: bool = True) -> pygame.Surface:
     """绘制背景、棋盘、蛇、可选食物、标题与分数。"""  # 函数说明
     surface = pygame.Surface(layout.window, pygame.SRCALPHA)  # 整窗画面
     surface.fill((*config.COLOR_BG, 255))  # 填充窗口背景
@@ -133,16 +146,20 @@ def _base_scene(layout: Layout, state: GameState, show_food: bool,  # 组装公�
     _draw_snake(surface, state)  # 绘制蛇
     if show_food:  # 开始界面不显示食物位置
         _draw_food(surface, state)  # 绘制食物
-    _draw_header(surface, layout, state)  # 绘制标题与分数
+    _draw_header(surface, layout, state, show_score=show_score)  # 绘制标题与分数
     if show_food:  # 游戏相关画面显示虚拟摇杆
-        _draw_joystick_box(surface, joystick)
+        _draw_energy(surface, state, boosting)
+        if input_mode == "joystick":
+            _draw_virtual_joystick(surface, joystick)
     return surface  # 返回基础画面
 
 
 def render_game(state: GameState, layout: Layout,  # 游戏画面
-                joystick: tuple[float, float] = (0.0, 0.0)) -> pygame.Surface:  # 当前摇杆输入
+                joystick: tuple[float, float] = (0.0, 0.0),
+                input_mode: str = "wasd", boosting: bool = False) -> pygame.Surface:
     """返回运行中的游戏画面。"""  # 函数说明
-    surface = _base_scene(layout, state, show_food=True, joystick=joystick)  # 基础场景
+    surface = _base_scene(layout, state, show_food=True, joystick=joystick,
+                          input_mode=input_mode, boosting=boosting)
     _draw_footer(surface, layout, config.GUIDE_TEXT)  # 游戏操作指引
     return surface  # 返回画面
 
@@ -165,8 +182,42 @@ def render_start(state: GameState, layout: Layout) -> pygame.Surface:  # 开始�
     return surface  # 返回画面
 
 
-def render_menu(state: GameState, layout: Layout) -> pygame.Surface:
-    surface = _base_scene(layout, state, show_food=False)
+def _draw_settings_icon(surface: pygame.Surface, layout: Layout) -> None:
+    """绘制主页面右上角齿轮设置图标。"""
+    rect = _to_pygame_rect(layout.settings_icon_rect())
+    color = config.COLOR_TITLE
+    center = rect.center
+    pygame.draw.circle(surface, config.COLOR_BOARD, center, 18)
+    pygame.draw.circle(surface, color, center, 18, width=2)
+    pygame.draw.circle(surface, color, center, 6, width=2)
+    for index in range(8):
+        angle = index * math.tau / 8
+        start = (center[0] + math.cos(angle) * 16, center[1] + math.sin(angle) * 16)
+        end = (center[0] + math.cos(angle) * 22, center[1] + math.sin(angle) * 22)
+        pygame.draw.line(surface, color, start, end, width=3)
+
+
+def _draw_settings_panel(surface: pygame.Surface, layout: Layout,
+                         input_mode: str) -> None:
+    """绘制 WASD / 鼠标摇杆设置选项。"""
+    panel = layout.settings_panel_rect()
+    _draw_panel(surface, panel, config.START_PANEL_ALPHA, config.COLOR_TITLE)
+    graphics.draw_text(surface, "控制模式", config.PANEL_TEXT_FONT_SIZE, config.COLOR_TEXT,
+                       center=(panel.center[0], panel.top + 25))
+    buttons = layout.settings_mode_rects()
+    for mode, rect in zip(config.INPUT_MODES, buttons):
+        button = _to_pygame_rect(rect)
+        selected = mode == input_mode
+        pygame.draw.rect(surface, config.COLOR_BOARD, button, border_radius=7)
+        pygame.draw.rect(surface, config.COLOR_ACCENT if selected else config.COLOR_PANEL_BORDER,
+                         button, width=2, border_radius=7)
+        graphics.draw_text(surface, config.INPUT_MODE_LABELS[mode], config.LABEL_FONT_SIZE,
+                           config.COLOR_TEXT, center=button.center)
+
+
+def render_menu(state: GameState, layout: Layout, input_mode: str = "wasd",
+                settings_open: bool = False) -> pygame.Surface:
+    surface = _base_scene(layout, state, show_food=False, show_score=False)
     panel = layout.start_panel_rect()
     _draw_panel(surface, panel, config.START_PANEL_ALPHA, config.COLOR_TITLE)
     graphics.draw_text(surface, config.TITLE_TEXT, config.PANEL_TITLE_FONT_SIZE + 8,
@@ -179,16 +230,23 @@ def render_menu(state: GameState, layout: Layout) -> pygame.Surface:
                          button, width=2, border_radius=8)
         graphics.draw_text(surface, label, config.PANEL_TEXT_FONT_SIZE, config.COLOR_TEXT,
                            center=button.center)
+    graphics.draw_text(surface, f"当前控制：{config.INPUT_MODE_LABELS[input_mode]}",
+                       config.LABEL_FONT_SIZE, config.COLOR_DIM_TEXT,
+                       center=(panel.center[0], panel.bottom - 24))
+    _draw_settings_icon(surface, layout)
+    if settings_open:
+        _draw_settings_panel(surface, layout, input_mode)
     return surface
 
 
 def render_help(state: GameState, layout: Layout, page: int = 0) -> pygame.Surface:
     surface = _base_scene(layout, state, show_food=False)
-    panel = layout.centered_rect(820, 470)
+    panel = layout.help_panel_rect()
     _draw_panel(surface, panel, config.START_PANEL_ALPHA, config.COLOR_TITLE)
-    pages = (("操作教程", "按住 WASD 转向；鼠标在右侧摇杆框内移动或拖动。"),
-             ("得分规则", "每吃一个绿色食物得 1 分，蛇身增长一节。"),
-             ("失败条件", "蛇碰到墙，或蛇头碰到非相邻身体时失败。"))
+    pages = (("操作与设置", "右上角设置图标可切换 WASD 或鼠标摇杆模式。"),
+             ("能量与加速", "按住 Shift 加速；时间自然恢复，食物额外恢复。"),
+             ("得分规则", "每个食物得 1 分；未到 50 节时蛇身增长一节。"),
+             ("失败条件", "只有蛇碰到墙会失败；碰到自己身体不会失败。"))
     title, text = pages[max(0, min(page, len(pages) - 1))]
     graphics.draw_text(surface, title, config.PANEL_TITLE_FONT_SIZE, config.COLOR_TITLE,
                        center=(panel.center[0], panel.top + 62))
@@ -198,28 +256,50 @@ def render_help(state: GameState, layout: Layout, page: int = 0) -> pygame.Surfa
     pygame.draw.rect(surface, config.COLOR_BOARD, illustration, border_radius=8)
     pygame.draw.rect(surface, config.COLOR_PANEL_BORDER, illustration, width=2, border_radius=8)
     if page == 0:
-        pygame.draw.rect(surface, (*config.COLOR_ACCENT, 100),
-                         pygame.Rect(illustration.right - 150, illustration.top + 12, 110, 96), 2)
-        graphics.draw_circle(surface, (illustration.centerx - 20, illustration.centery), 20, config.COLOR_HEAD)
-        graphics.draw_arrow_head(surface, (illustration.centerx + 70, illustration.centery), (1, 0), 18, config.COLOR_ACCENT)
-        graphics.draw_text(surface, "W A S D", config.LABEL_FONT_SIZE, config.COLOR_TEXT,
-                           center=(illustration.centerx - 10, illustration.bottom - 18))
+        graphics.draw_text(surface, "W A S D", 30, config.COLOR_HEAD,
+                           center=(illustration.left + 150, illustration.centery))
+        graphics.draw_text(surface, "或", config.LABEL_FONT_SIZE, config.COLOR_DIM_TEXT,
+                           center=(illustration.centerx, illustration.centery))
+        graphics.draw_circle(surface, (illustration.right - 150, illustration.centery), 34,
+                             config.COLOR_ACCENT)
+        graphics.draw_circle(surface, (illustration.right - 150, illustration.centery), 13,
+                             config.COLOR_BOARD)
+        graphics.draw_text(surface, "右上角设置切换", config.LABEL_FONT_SIZE, config.COLOR_TEXT,
+                           center=(illustration.centerx, illustration.bottom - 18))
     elif page == 1:
+        meter = pygame.Rect(illustration.left + 55, illustration.top + 14, 24, 92)
+        graphics.draw_energy_meter(surface, meter, 0.64, True)
+        graphics.draw_text(surface, "Shift", 28, config.COLOR_ENERGY_BOOST,
+                           center=(illustration.centerx - 25, illustration.centery))
+        graphics.draw_text(surface, "加速 1.5×", config.LABEL_FONT_SIZE, config.COLOR_TEXT,
+                           center=(illustration.centerx - 25, illustration.bottom - 18))
+        graphics.draw_text(surface, "每秒 +1/30", config.LABEL_FONT_SIZE, config.COLOR_DIM_TEXT,
+                           center=(illustration.right - 115, illustration.centery - 18))
+        graphics.draw_text(surface, "食物 +1/15", config.LABEL_FONT_SIZE, config.COLOR_FOOD,
+                           center=(illustration.right - 115, illustration.centery + 20))
+    elif page == 2:
+        x, y = illustration.center
         food_half = config.FOOD_SIDE / 2
-        for index, (x, y) in enumerate(((illustration.left + 95, illustration.centery),
-                                        (illustration.centerx, illustration.centery),
-                                        (illustration.right - 95, illustration.centery))):
-            graphics.draw_hollow_square(surface, (x - food_half, y - food_half,
-                                                  config.FOOD_SIDE, config.FOOD_SIDE), config.COLOR_FOOD, 2)
-            graphics.draw_text(surface, f"+{index + 1}", config.LABEL_FONT_SIZE, config.COLOR_TEXT,
-                               center=(x, y + 34))
+        graphics.draw_hollow_square(surface, (x - food_half, y - food_half,
+                                              config.FOOD_SIDE, config.FOOD_SIDE),
+                                    config.COLOR_FOOD, 2)
+        graphics.draw_text(surface, "+1", 28, config.COLOR_TEXT,
+                           center=(x + 60, y))
+        graphics.draw_text(surface, "每个食物都是 1 分", config.LABEL_FONT_SIZE,
+                           config.COLOR_TEXT, center=(x, illustration.bottom - 18))
     else:
         pygame.draw.rect(surface, config.COLOR_WALL,
                          pygame.Rect(illustration.left + 20, illustration.top + 20, 12, illustration.height - 40))
         graphics.draw_circle(surface, (illustration.centerx, illustration.centery), 26, config.COLOR_HEAD)
         graphics.draw_arrow_head(surface, (illustration.left + 52, illustration.centery), (-1, 0), 18, config.COLOR_DANGER)
-        graphics.draw_text(surface, "碰墙 / 碰到身体", config.LABEL_FONT_SIZE, config.COLOR_DANGER,
+        graphics.draw_text(surface, "碰墙：失败", config.LABEL_FONT_SIZE, config.COLOR_DANGER,
                            center=(illustration.centerx, illustration.bottom - 18))
+        graphics.draw_circle(surface, (illustration.right - 150, illustration.centery - 16),
+                             18, config.COLOR_BODY)
+        graphics.draw_circle(surface, (illustration.right - 124, illustration.centery + 10),
+                             18, config.COLOR_HEAD)
+        graphics.draw_text(surface, "碰身体：安全", config.LABEL_FONT_SIZE, config.COLOR_ACCENT,
+                           center=(illustration.right - 132, illustration.centery + 42))
     graphics.draw_text(surface, f"{page + 1} / {len(pages)}", config.LABEL_FONT_SIZE, config.COLOR_DIM_TEXT,
                        center=(panel.center[0], panel.bottom - 24))
     if page > 0:
@@ -274,12 +354,17 @@ BUILDERS = {  # 界面名到绘制函数的映射
 }  # 界面映射结束
 
 
-def render(screen: str, state: GameState, layout: Layout, joystick: tuple[float, float] = (0.0, 0.0), help_page: int = 0) -> pygame.Surface:  # 按名称渲染界面
+def render(screen: str, state: GameState, layout: Layout,
+           joystick: tuple[float, float] = (0.0, 0.0), help_page: int = 0,
+           input_mode: str = "wasd", settings_open: bool = False,
+           boosting: bool = False) -> pygame.Surface:  # 按名称渲染界面
     """根据界面名调用对应绘制函数。"""  # 函数说明
     if screen not in BUILDERS:  # 校验界面名
         raise ValueError(f"未知界面：{screen}")  # 抛出错误
     if screen == "game":  # 只有运行中的界面显示方向偏移
-        return render_game(state, layout, joystick)  # 绘制当前按住的摇杆方向
+        return render_game(state, layout, joystick, input_mode, boosting)
     if screen == "help":
         return render_help(state, layout, help_page)
+    if screen == "menu":
+        return render_menu(state, layout, input_mode, settings_open)
     return BUILDERS[screen](state, layout)  # 其他界面使用居中的摇杆

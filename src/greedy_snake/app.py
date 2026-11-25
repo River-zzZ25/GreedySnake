@@ -44,9 +44,10 @@ class Controller:  # 游戏界面与输入控制器
         self.last_press_time: float | None = None  # 上一次空格按下时间
         self.last_update_time: float | None = None  # 上一次物理更新的时间
         self.held_keys: set[str] = set()  # 当前仍按住的 WASD
-        self.mouse_joystick_active = False
         self.mouse_joystick = (0.0, 0.0)
-        self.mouse_joystick_hover = False
+        self.input_mode = "wasd"  # 默认键盘控制，可在主页面设置中切换
+        self.settings_open = False
+        self.boost_requested = False
         self.quit = False  # 是否退出程序
 
     def reset(self) -> None:  # 重新开始
@@ -56,19 +57,26 @@ class Controller:  # 游戏界面与输入控制器
         self.last_press_time = None  # 重置暂停计时
         self.last_update_time = None  # 从当前时刻重新计时
         self.held_keys.clear()  # 清除上一局残留按键
-        self.mouse_joystick_active = False
         self.mouse_joystick = (0.0, 0.0)
-        self.mouse_joystick_hover = False
+        self.settings_open = False
+        self.boost_requested = False
 
     def handle_key(self, key: int, now: float, character: str = "") -> None:  # 处理按键按下
         """按当前界面处理按键，并记录按住的 WASD 施力。"""  # 函数说明
         name = _key_name(key, character)  # 统一按键名称与大小写
         direction = DIRECTION_BY_NAME.get(name)  # 判断是否为方向键
+        if key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
+            self.boost_requested = self.screen == "game"
+            return
         if key == pygame.K_ESCAPE or name == "q":
+            if self.settings_open:
+                self.settings_open = False
+                return
             if self.screen in {"game", "pause", "over", "help"}:
                 self.screen = "menu"
                 self.last_update_time = None
                 self.held_keys.clear()
+                self.boost_requested = False
             else:
                 self.quit = True
             return  # 结束处理
@@ -89,7 +97,7 @@ class Controller:  # 游戏界面与输入控制器
             if key in (pygame.K_LEFT, pygame.K_a):
                 self.help_page = max(0, self.help_page - 1)
             elif key in (pygame.K_RIGHT, pygame.K_d):
-                self.help_page = min(2, self.help_page + 1)
+                self.help_page = min(config.HELP_PAGE_COUNT - 1, self.help_page + 1)
             elif key in (pygame.K_RETURN, pygame.K_ESCAPE, pygame.K_BACKSPACE):
                 self.screen = "menu"
             return
@@ -128,6 +136,9 @@ class Controller:  # 游戏界面与输入控制器
 
     def handle_key_up(self, key: int, character: str = "") -> None:  # 处理按键释放
         """释放 WASD 后停止对应施力，使虚拟摇杆回到中心。"""  # 函数说明
+        if key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
+            self.boost_requested = False
+            return
         name = _key_name(key, character)  # 统一按键名称
         if name in DIRECTION_BY_NAME:  # 仅处理方向键释放
             self.held_keys.discard(name)  # 清除持续施力
@@ -136,7 +147,7 @@ class Controller:  # 游戏界面与输入控制器
         """合成当前按住的 WASD，返回归一化后的摇杆偏移方向。"""  # 函数说明
         if self.screen != "game":  # 暂停或结束时摇杆居中
             return (0.0, 0.0)  # 非游戏界面不施力
-        if self.mouse_joystick_active or self.mouse_joystick_hover:
+        if self.input_mode == "joystick":
             return self.mouse_joystick
         x = sum(DIRECTION_BY_NAME[name][0] for name in self.held_keys)  # 合成横向输入
         y = sum(DIRECTION_BY_NAME[name][1] for name in self.held_keys)  # 合成纵向输入
@@ -148,9 +159,8 @@ class Controller:  # 游戏界面与输入控制器
     def lose_focus(self) -> None:  # 窗口失去焦点
         """清除可能在其他窗口释放的按键，防止回来后持续转弯。"""  # 函数说明
         self.held_keys.clear()  # 清除方向输入
-        self.mouse_joystick_active = False
         self.mouse_joystick = (0.0, 0.0)
-        self.mouse_joystick_hover = False
+        self.boost_requested = False
         self.last_update_time = None  # 恢复时不积累离开期间的时间
         self.last_press_time = None  # 丢弃旧暂停按键时间
 
@@ -164,8 +174,9 @@ class Controller:  # 游戏界面与输入控制器
             return  # 尚未发生时间流逝
         dt = max(0.0, min(now - self.last_update_time, config.MAX_FRAME_DT))  # 限制单帧步长
         self.last_update_time = now  # 记录本次物理更新时间
-        hit = advance_state(self.state, self.layout, dt, self.joystick_input())  # 连续推进并处理碰撞
-        if hit:  # 本帧撞墙或撞到身体
+        hit = advance_state(self.state, self.layout, dt, self.joystick_input(),
+                            boost=self.boost_requested)  # 连续推进并处理墙体与能量
+        if hit:  # 本帧撞墙
             self.screen = "over"  # 显示结束界面
             self.last_update_time = None  # 结束后停止物理计时
 
@@ -177,11 +188,31 @@ class Controller:  # 游戏界面与输入控制器
         if self.screen == "start":
             self.reset()
         elif self.screen == "menu":
-            panel = self.layout.start_panel_rect()
-            for index, _label in enumerate(config.MENU_BUTTONS):
-                rect = pygame.Rect(panel.left + 120, panel.top + 140 + index * 58 - 22,
-                                   panel.width - 240, 44)
-                if rect.collidepoint(position):
+            icon_rect = self.layout.settings_icon_rect()
+            icon = pygame.Rect(icon_rect.left, icon_rect.top,
+                               icon_rect.width, icon_rect.height)
+            if icon.collidepoint(position):
+                self.settings_open = not self.settings_open
+                return
+            if self.settings_open:
+                wasd_rect, joystick_rect = (
+                    pygame.Rect(item.left, item.top, item.width, item.height)
+                    for item in self.layout.settings_mode_rects()
+                )
+                if wasd_rect.collidepoint(position):
+                    self.input_mode = "wasd"
+                    self.held_keys.clear()
+                    self.mouse_joystick = (0.0, 0.0)
+                elif joystick_rect.collidepoint(position):
+                    self.input_mode = "joystick"
+                    self.held_keys.clear()
+                    self.mouse_joystick = (0.0, 0.0)
+                else:
+                    self.settings_open = False
+                return
+            for index, rect in enumerate(self.layout.menu_button_rects()):
+                hit_rect = pygame.Rect(rect.left, rect.top, rect.width, rect.height)
+                if hit_rect.collidepoint(position):
                     if index == 0:
                         self.reset()
                     elif index == 1:
@@ -190,12 +221,12 @@ class Controller:  # 游戏界面与输入控制器
                         self.quit = True
                     return
         elif self.screen == "help":
-            panel = self.layout.centered_rect(820, 470)
+            panel = self.layout.help_panel_rect()
             if position[1] >= panel.bottom - 115:
                 self.screen = "menu"
             elif position[0] < panel.left + 90 and self.help_page > 0:
                 self.help_page -= 1
-            elif position[0] > panel.right - 90 and self.help_page < 2:
+            elif position[0] > panel.right - 90 and self.help_page < config.HELP_PAGE_COUNT - 1:
                 self.help_page += 1
         elif self.screen == "game":  # 游戏画面单击暂停
             self.screen = "pause"  # 进入暂停界面
@@ -211,17 +242,11 @@ class Controller:  # 游戏界面与输入控制器
             self.reset()  # 重开一局
 
     def handle_mouse_motion(self, position: tuple[int, int]) -> None:
-        x, y, width, height = config.JOYSTICK_BOX
-        inside = x <= position[0] <= x + width and y <= position[1] <= y + height
-        if not inside:
-            self.mouse_joystick_hover = False
-            if not self.mouse_joystick_active:
-                self.mouse_joystick = (0.0, 0.0)
+        if self.screen != "game" or self.input_mode != "joystick":
             return
-        self.mouse_joystick_hover = True
-        cx, cy = x + width / 2, y + height / 2
+        cx, cy = config.JOYSTICK_CENTER
         dx, dy = position[0] - cx, position[1] - cy
-        radius = min(width, height) / 2
+        radius = config.JOYSTICK_BASE_RADIUS
         length = math.hypot(dx, dy)
         if length > radius:
             dx, dy = dx * radius / length, dy * radius / length
@@ -248,27 +273,22 @@ def run(seed: int | None = None) -> None:  # 运行图形窗口
                 elif event.type == pygame.WINDOWFOCUSLOST:  # 切换到其他窗口
                     controller.lose_focus()  # 清除可能无法收到释放事件的方向键
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # 鼠标左键
-                    joystick_rect = pygame.Rect(*config.JOYSTICK_BOX)
-                    if controller.screen == "game" and joystick_rect.collidepoint(event.pos):
-                        controller.mouse_joystick_active = True
-                        controller.handle_mouse_motion(event.pos)
-                    else:
-                        controller.handle_click(event.pos, time.monotonic())
+                    controller.handle_click(event.pos, time.monotonic())
                 elif event.type == pygame.MOUSEMOTION:
                     controller.handle_mouse_motion(event.pos)
-                elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                    controller.mouse_joystick_active = False
-                    controller.mouse_joystick = (0.0, 0.0)
-                    controller.mouse_joystick_hover = False
             if controller.quit:  # 需要退出
                 break  # 跳出循环
             now = time.monotonic()  # 为一帧使用同一个时间戳
             controller.update(now)  # 按真实时间连续移动蛇
             joystick = controller.joystick_input()
             if controller.screen == "help":
-                frame = screens.render(controller.screen, controller.state, layout, joystick, controller.help_page)
+                frame = screens.render(controller.screen, controller.state, layout, joystick,
+                                       help_page=controller.help_page)
             else:
-                frame = screens.render(controller.screen, controller.state, layout, joystick)
+                frame = screens.render(controller.screen, controller.state, layout, joystick,
+                                       input_mode=controller.input_mode,
+                                       settings_open=controller.settings_open,
+                                       boosting=controller.boost_requested)
             window.blit(frame, (0, 0))  # 绘制到窗口
             pygame.display.flip()  # 刷新显示
             clock.tick(config.FPS)  # 控制高刷新率

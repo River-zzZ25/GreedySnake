@@ -198,6 +198,25 @@ def draw_joystick(surface: pygame.Surface, center: tuple[int, int], base_radius:
     surface.blit(layer, (center[0] - margin, center[1] - margin))  # 合成到游戏画面
 
 
+def draw_energy_meter(surface: pygame.Surface, rect: pygame.Rect, value: float,
+                      boosting: bool = False) -> None:
+    """用高分辨率裁剪绘制连续变化的竖直能量条。"""
+    scale = 4
+    layer = pygame.Surface((rect.width * scale, rect.height * scale), pygame.SRCALPHA)
+    scale_rect = layer.get_rect()
+    pygame.draw.rect(layer, (*config.COLOR_PANEL, 245), scale_rect, border_radius=5 * scale)
+    inner = scale_rect.inflate(-6 * scale, -6 * scale)
+    clamp = max(0.0, min(1.0, value))
+    fill_height = round(inner.height * clamp)
+    if fill_height > 0:
+        color = config.COLOR_ENERGY_BOOST if boosting else config.COLOR_ENERGY
+        fill = pygame.Rect(inner.left, inner.bottom - fill_height, inner.width, fill_height)
+        pygame.draw.rect(layer, (*color, 255), fill, border_radius=3 * scale)
+    pygame.draw.rect(layer, (*config.COLOR_TEXT, 210), scale_rect, width=2 * scale,
+                     border_radius=5 * scale)
+    surface.blit(pygame.transform.smoothscale(layer, rect.size), rect.topleft)
+
+
 def draw_text(surface: pygame.Surface, text: str, size: int, color: tuple[int, int, int],  # 文本与对齐参数
               center: tuple[int, int] | None = None, topright: tuple[int, int] | None = None,  # 对齐方式参数
               topleft: tuple[int, int] | None = None, shadow: bool = False) -> pygame.Rect:  # 绘制文字

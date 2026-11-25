@@ -9,6 +9,7 @@ WINDOW_HEIGHT = 720  # 窗口高度
 FPS = 120  # 目标刷新率，保证连续转向平滑
 MAX_FRAME_DT = 0.05  # 单帧最大物理步长，避免窗口卡顿后瞬移
 SNAKE_SPEED = 189.0  # 在上一阶段基础上提升 1.5 倍
+BOOST_SPEED_MULTIPLIER = 1.5  # 按住 Shift 时的速度倍率
 TURN_RATE = 3.141592653589793  # 最大转速为每秒 180 度，形成有半径的曲线
 TURN_RESPONSE = 5.0  # 朝目标方向转动的响应强度，接近目标时逐渐放缓
 PHYSICS_DT = 1 / 240  # 小步物理积分，曲线与碰撞不依赖显示刷新率
@@ -29,19 +30,31 @@ FOOD_SIDE = 18 * AREA_SCALE  # 边长约 14.7 像素，面积约缩为 2/3
 FOOD_OUTLINE = 2  # 空心正方形边框粗细
 FOOD_MARGIN = 12  # 食物距离墙的最小像素距离
 DARKEN_FACTOR = 0.55  # 圆形重叠区域颜色加深系数
+MAX_SNAKE_LENGTH = 50  # 蛇头与身体节点总数上限
+
+# ---------------- 能量与加速 ----------------  # 分组说明
+
+ENERGY_INITIAL = 1.0  # 新一局能量全满
+ENERGY_MAX = 1.0  # 能量归一化上限
+ENERGY_RECOVERY_PER_SECOND = 1 / 30  # 每秒自然恢复量
+ENERGY_BOOST_DRAIN_PER_SECOND = 1 / 6  # 加速时每秒消耗量
+ENERGY_FOOD_GAIN = 1 / 15  # 每个食物恢复量
 
 # ---------------- 虚拟摇杆 ----------------  # 分组说明
 
-JOYSTICK_BOX = (WINDOW_WIDTH - 268, 400, 220, 220)  # 右侧鼠标摇杆框，位于棋盘内
-JOYSTICK_CENTER = (JOYSTICK_BOX[0] + JOYSTICK_BOX[2] // 2,
-                   JOYSTICK_BOX[1] + JOYSTICK_BOX[3] // 2)  # 摇杆中心
-JOYSTICK_BASE_RADIUS = 72  # 框内底座半径
-JOYSTICK_KNOB_RADIUS = 20  # 摇杆中心圆半径
-JOYSTICK_MAX_OFFSET = 28  # 摇杆中心最大偏移
+JOYSTICK_BOX = (WINDOW_WIDTH - 220, WINDOW_HEIGHT - 214, 190, 150)  # 右下角摇杆显示范围
+JOYSTICK_CENTER = (WINDOW_WIDTH - 112, WINDOW_HEIGHT - 152)  # 右下角虚拟摇杆中心
+JOYSTICK_BASE_RADIUS = 72  # 摇杆底座半径
+JOYSTICK_KNOB_RADIUS = 22  # 摇杆中心圆半径
+JOYSTICK_MAX_OFFSET = 48  # 摇杆中心最大偏移
 JOYSTICK_TRANSPARENCY = 0.40  # 摇杆透明度为 40%
 JOYSTICK_ALPHA = int(255 * (1 - JOYSTICK_TRANSPARENCY))  # 40% 透明对应 60% 不透明
 MAX_FOOD_COUNT = 10  # 同时存在的食物上限
 INITIAL_FOOD_COUNT = 3  # 开局同时出现多个食物
+INPUT_MODES = ("wasd", "joystick")  # 设置页可选择的控制模式
+INPUT_MODE_LABELS = {"wasd": "WASD", "joystick": "鼠标摇杆"}
+HELP_PAGE_COUNT = 4  # 帮助页：操作与设置、能量、得分、失败条件
+ENERGY_BAR_RECT = (WINDOW_WIDTH - 66, 104, 22, 260)  # 右侧竖直能量条
 
 # ---------------- 颜色（RGB 三元组） ----------------  # 分组说明
 
@@ -59,6 +72,8 @@ COLOR_DIM_TEXT = (150, 150, 160)  # 灰色提示文字
 COLOR_PANEL = (18, 18, 26)  # 弹窗面板底色
 COLOR_PANEL_BORDER = (95, 95, 110)  # 弹窗面板边框
 COLOR_VEIL = (5, 5, 10)  # 半透明遮罩颜色
+COLOR_ENERGY = (255, 178, 52)  # 能量条填充色
+COLOR_ENERGY_BOOST = (255, 235, 112)  # 加速时能量条高亮
 
 # ---------------- 透明度 ----------------  # 分组说明
 
@@ -93,13 +108,13 @@ LABEL_FONT_SIZE = 18  # 图标下方的小标签字号
 # ---------------- 界面文案 ----------------  # 分组说明
 
 TITLE_TEXT = "贪 吃 蛇"  # 顶部标题
-GUIDE_TEXT = "按住 WASD 或拖动右侧摇杆转向    松开继续前进    单击 / 空格连按两次暂停"
+GUIDE_TEXT = "WASD / 鼠标摇杆转向    Shift 加速    单击 / 空格连按两次暂停"
 PAUSE_HINT = "暂停中：单击 / 空格连按两次继续    右侧重试    左侧回主页面"
 OVER_HINT = "R 重试    Esc 回主页面"
 START_LINES = (  # 开始面板正文
     "按住 W / A / S / D   平滑转向",  # 移动说明
-    "松开继续前进，吃食物 +1 分并增长",  # 得分与成长规则
-    "撞墙或撞到自己，游戏结束",  # 失败规则
+    "吃食物 +1 分，蛇身最多 50 节",  # 得分与成长规则
+    "撞墙会失败，碰到自己身体不会失败",  # 失败规则
     "空格连按两次 / 鼠标单击   暂停",  # 暂停说明
 )  # 开始面板正文结束
 START_HINT = "== 按任意键开始 =="  # 开始提示

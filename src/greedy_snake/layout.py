@@ -94,6 +94,33 @@ class Layout:  # 界面布局
         """返回开始面板矩形。"""  # 函数说明
         return self.centered_rect(config.START_PANEL_WIDTH, config.START_PANEL_HEIGHT)  # 居中面板
 
+    def menu_button_rects(self) -> tuple[Rect, Rect, Rect]:  # 主页面三个按钮
+        """返回开始游戏、帮助和退出按钮。"""
+        panel = self.start_panel_rect()
+        return tuple(
+            Rect(panel.left + 120, panel.top + 140 + index * 58 - 22,
+                 panel.width - 240, 44)
+            for index in range(3)
+        )
+
+    def settings_icon_rect(self) -> Rect:  # 主页面右上角设置图标
+        """返回设置图标的点击区域。"""
+        return Rect(self.window[0] - 72, 8, 48, 48)
+
+    def settings_panel_rect(self) -> Rect:  # 设置弹层
+        """返回控制模式设置弹层。"""
+        return Rect(self.window[0] - 304, 66, 264, 154)
+
+    def settings_mode_rects(self) -> tuple[Rect, Rect]:
+        """返回 WASD 与鼠标摇杆两个设置选项。"""
+        panel = self.settings_panel_rect()
+        return (Rect(panel.left + 18, panel.top + 48, panel.width - 36, 42),
+                Rect(panel.left + 18, panel.top + 98, panel.width - 36, 42))
+
+    def help_panel_rect(self) -> Rect:
+        """返回帮助页固定面板。"""
+        return self.centered_rect(820, 470)
+
     def over_panel_rect(self) -> Rect:  # 结束面板矩形
         """返回结束面板矩形。"""  # 函数说明
         return self.centered_rect(config.OVER_PANEL_WIDTH, config.OVER_PANEL_HEIGHT)  # 居中面板
